@@ -79,3 +79,4 @@ Most libraries (LilyGoLib, LVGL, RadioLib, XPowersLib, SensorLib, etc.) are pull
 
 - [LilyGoLib](https://github.com/Xinyuan-LilyGO/LilyGoLib) — the board support library this app is built on (`instance`, `hw_init`, board examples referenced by the commented-out `src_dir` options).
 - [LVGL docs](https://lvgl.io/docs/open) and [lvgl/lvgl](https://github.com/lvgl/lvgl) — the UI toolkit used throughout `ui_*.cpp`.
+- [PlatoformIO docs](https://docs.platformio.org/en/latest/) — the build system and IDE used to build/upload/monitor this project.

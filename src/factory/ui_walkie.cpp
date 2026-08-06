@@ -30,7 +30,9 @@
  *  - PCMFlowG722 library (https://github.com/tanakamasayuki/PCMFlowG722)
  */
 #include "ui_define.h"
+#ifdef ARDUINO
 #include "esp_arduino_version.h"
+#endif
 
 // Version marked, new version not compatible
 #if (ESP_ARDUINO_VERSION <= ESP_ARDUINO_VERSION_VAL(3,0,0)) && defined(ARDUINO_T_LORA_PAGER)

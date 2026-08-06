@@ -398,7 +398,7 @@ lv_obj_t *create_syncword_textarea(lv_obj_t *parent)
     lv_obj_set_scrollbar_mode(ta, LV_SCROLLBAR_MODE_OFF);
 
     char buf[16] = {0};
-    itoa(radio_params_copy.syncWord, buf, 10);
+    snprintf(buf, sizeof(buf), "%d", radio_params_copy.syncWord);
     lv_textarea_set_text(ta, buf);
     lv_obj_add_event_cb(ta, _msg_ta_cb, LV_EVENT_ALL, NULL);
     return ta;

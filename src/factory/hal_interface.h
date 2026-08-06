@@ -97,6 +97,11 @@ typedef enum {
 #define HW_QMI8658_ONLINE           (_BV(19))
 #define HW_LED_INDIC_ONLINE         (_BV(20))
 
+// Arduino-ESP32 core version macros; used to gate code that only
+// compiles/behaves correctly against specific arduino-esp32 releases
+#define ESP_ARDUINO_VERSION_VAL(major, minor, patch) (((major) << 16) | ((minor) << 8) | (patch))
+#define ESP_ARDUINO_VERSION ESP_ARDUINO_VERSION_VAL(0, 0, 0)
+
 #else
 // If compiling for Arduino, include the WiFi library
 #include <WiFi.h>
