@@ -44,12 +44,29 @@ which takes over the whole screen and loses your place in the launcher.
 - The emulator envs define `ARDUINO_T_WATCH_S3_ULTRA` / `ARDUINO_T_WATCH_S3`
   (`platformio.ini:313`, `:324`), and the board-macro chain at `hal_interface.h:1516-1574` is
   **not** wrapped in `#ifdef ARDUINO`. So both emulator watch envs get `USING_TOUCHPAD`
-  (`:1540`, `:1560`) and exercise the tray with the SDL mouse, while `emulator_lora_pager`
-  compiles the stub path. **The whole feature is testable natively, with no hardware.**
+  (`:1540`, `:1560`) and exercise the tray with the SDL mouse. **The whole feature is testable
+  natively, with no hardware.**
+
+## Status: validated against a working prototype
+
+This plan was checked by building a throwaway implementation and driving it with real pointer
+input in the SDL emulator (Xvfb + xdotool), on `emulator_watch_ultra` (502×410) and
+`emulator_twatchs3` (240×240). Confirmed working end to end:
+
+- Swipe down opens the tray with live time, date, battery %, Wi-Fi state, brightness and volume.
+- Swiping down **starting on an app icon** opens the tray and does **not** launch that app.
+- Swipe up / scrim tap / grabber all close it, and the launcher is fully tappable afterwards —
+  nothing is swallowed by `lv_layer_top()`.
+- Leaving the tray open past `SCREEN_TIMEOUT` auto-closes it and the clock face then appears
+  normally, i.e. the low-power save/restore works.
+
+That exercise also disproved two things this plan originally recommended. Both are corrected
+below and called out as traps 2 and 3 — **they fail silently, so they are easy to re-introduce.**
 
 ## Traps found while designing (read before writing code)
 
-These are the things that would otherwise cost an afternoon each.
+These are the things that would otherwise cost an afternoon each. Traps 2 and 3 are not
+theoretical — the prototype hit both.
 
 1. **`ui_define.h:99` does `#define lv_point_t lv_point_precise_t`.** `lv_indev_get_point()` takes
    a real `lv_point_t*` (`int32_t x,y`), but `lv_point_precise_t` is `float x,y` when
@@ -58,54 +75,80 @@ These are the things that would otherwise cost an afternoon each.
    `#undef lv_point_t`. **Any file calling `lv_indev_get_point()` must do the same.** Avoiding that
    call altogether (see the gesture design) sidesteps the trap.
 
-2. **`LV_EVENT_GESTURE` goes to the object under the finger at press time**, and walks upward only
-   while each object carries `LV_OBJ_FLAG_GESTURE_BUBBLE`. A swipe starting on an app icon lands on
-   the `lv_btn`, not on `menu_panel`. Two options, both fine:
-   - Attach the callback to `menu_panel` and set `GESTURE_BUBBLE` on the icon buttons (in
-     `create_app()`) and on the flex-row `panel` (`ui_main.cpp:573`) — two flags, and the launcher
-     tile scopes the gesture to the home screen by construction.
-   - Or attach to the **indev** with `lv_indev_add_event_cb()`, which LVGL dispatches
-     unconditionally regardless of which object was hit — no flags at all, but then the
-     launcher-only and modal guards must be written explicitly.
+2. **Do not attach the gesture callback to `menu_panel` — it will never fire.**
+   `LV_EVENT_GESTURE` goes to the object under the finger at press time and walks upward *while*
+   each object carries `LV_OBJ_FLAG_GESTURE_BUBBLE`. LVGL's tileview sets that flag on **both the
+   tileview and its tiles itself**, so a launcher gesture always bubbles past `menu_panel` and
+   `main_screen` and lands on the screen. Measured on the prototype:
 
-3. **`lv_layer_top()` is already non-clickable** (LVGL clears `LV_OBJ_FLAG_CLICKABLE` on it at
+   ```
+   [tray] bubble flags: main_screen=1 menu_panel=1
+   [tray] SCREEN gesture dir=8            (8 == LV_DIR_BOTTOM)
+   ```
+
+   Attach to **`lv_screen_active()`** instead (or to the indev via `lv_indev_add_event_cb()`), and
+   write the launcher-only guard explicitly (trap 3). You still need `GESTURE_BUBBLE` on the icon
+   buttons (in `create_app()`) and on the flex-row `panel` (`ui_main.cpp:573`) — without those the
+   gesture stops dead at the `lv_btn` and never reaches the screen at all.
+
+3. **`lv_tileview_get_tile_active()` returns `NULL` until the first navigation.** `tile_act` is set
+   only by `lv_tileview_set_tile()` / `_set_tile_by_index()` (`lv_tileview.c:92`, `:182`) —
+   `lv_tileview_add_tile()` never sets it, and `setupGui()` doesn't call either at boot. So on a
+   freshly booted device sitting on the launcher, the obvious guard
+
+   ```c
+   if (lv_tileview_get_tile_active(main_screen) != menu_panel) return;   /* WRONG */
+   ```
+
+   rejects **every** swipe, and the press then falls through and launches whatever icon it started
+   on. Treat `NULL` as the launcher:
+
+   ```c
+   lv_obj_t *tile = lv_tileview_get_tile_active(main_screen);
+   if (tile && tile != menu_panel) return;
+   ```
+
+   (Alternatively call `lv_tileview_set_tile_by_index(main_screen, 0, 0, LV_ANIM_OFF)` once in
+   `setupGui()` to initialise it, but the `NULL` check is the smaller change.)
+
+4. **`lv_layer_top()` is already non-clickable** (LVGL clears `LV_OBJ_FLAG_CLICKABLE` on it at
    display creation), **but hit-testing still recurses into its children**, and layer_top is
    searched *before* the active screen. So a clickable tray child would swallow launcher taps even
    with the tray "closed". Fix: keep `LV_OBJ_FLAG_HIDDEN` on the tray and scrim whenever closed —
    hit-testing returns immediately for hidden objects, and it skips rendering too. Never add
    `LV_OBJ_FLAG_CLICKABLE` to `lv_layer_top()` itself.
 
-4. **`lv_indev_wait_release()` is mandatory, not a nicety.** Without it the swipe that opens the
+5. **`lv_indev_wait_release()` is mandatory, not a nicety.** Without it the swipe that opens the
    tray still delivers `LV_EVENT_CLICKED` to the button it started on, launching an app *behind*
    the tray. Call it right after `tray_open()` / `tray_close()`.
 
-5. **`hw_set_user_setting()` writes NVS unconditionally** (`hal_interface.cpp:732`). Calling it from
+6. **`hw_set_user_setting()` writes NVS unconditionally** (`hal_interface.cpp:732`). Calling it from
    a slider's `LV_EVENT_VALUE_CHANGED` would mean one flash write per pixel of drag. `ui_sys.cpp`
    deliberately defers it to a single call on exit (`:61`) — do the same: set a dirty flag, flush
    once in `tray_close()`.
 
-6. **The icon panel's horizontal scroll does *not* eat a vertical swipe.** LVGL picks the scroll
+7. **The icon panel's horizontal scroll does *not* eat a vertical swipe.** LVGL picks the scroll
    axis from the dominant drag direction and won't select a horizontal-only object for a downward
    drag, so `scroll_obj` stays `NULL` and gesture detection proceeds.
 
-7. **Keep the tray panel non-scrollable.** If it were vertically scrollable, LVGL would suppress
+8. **Keep the tray panel non-scrollable.** If it were vertically scrollable, LVGL would suppress
    the swipe-up-to-close gesture entirely (gesture detection bails when a scroll object is active).
    Size the content to fit instead.
 
-8. **Fonts must already be enabled in the board's `lv_conf.h`.** `lv_font_montserrat_24` is used
+9. **Fonts must already be enabled in the board's `lv_conf.h`.** `lv_font_montserrat_24` is used
    unguarded in `ui_power.cpp`, and each board defines `MAIN_FONT` (`hal_interface.h:1532`, `:1557`,
    `:1570`). Prefer those two. `lv_font_montserrat_32` is **not** referenced anywhere in
    `src/factory` today — don't be the first to assume it's compiled in.
 
-9. **Use logical resolution for geometry.** Existing code branches on
+10. **Use logical resolution for geometry.** Existing code branches on
    `lv_display_get_physical_*_resolution()` for font/style choices only. For positioning on
    `lv_layer_top()`, use `lv_display_get_vertical_resolution()` so a rotated display doesn't
    misplace the panel.
 
-10. **`create_radius_button()` (`ui_tools.cpp:306`) sets `LV_OBJ_FLAG_FLOATING`**, which removes the
+11. **`create_radius_button()` (`ui_tools.cpp:306`) sets `LV_OBJ_FLAG_FLOATING`**, which removes the
     button from flex layout. Build the tray's action buttons inline with `lv_btn_create`.
 
-11. **`create_slider()` / `create_switch()` wrap `lv_menu_cont_create()`** (`ui_tools.cpp:191`).
+12. **`create_slider()` / `create_switch()` wrap `lv_menu_cont_create()`** (`ui_tools.cpp:191`).
     That works as a plain flex child (no `lv_menu` ancestor required), but it carries menu styling.
     Either accept it for consistency with the Settings app, or build sliders directly.
 
@@ -146,7 +189,8 @@ void ui_launch_app(app_t *app)
 
 Then the lambda body becomes `if (c == LV_EVENT_CLICKED) ui_launch_app(func_cb);`.
 
-**Enable gesture bubbling** (if using the `menu_panel` approach from trap 2): add
+**Enable gesture bubbling** — required regardless of where the callback is attached (trap 2), since
+without it a swipe starting on an icon stops dead at the `lv_btn`: add
 `lv_obj_add_flag(btn, LV_OBJ_FLAG_GESTURE_BUBBLE);` in `create_app()` and the same on `panel`
 after `:573`.
 
@@ -227,21 +271,40 @@ Open on `LV_DIR_BOTTOM`, close on `LV_DIR_TOP`, reading
 `lv_indev_get_gesture_dir(lv_indev_active())` — the v9 spelling; `lv_indev_get_act()` is v8 and
 does not exist here.
 
-Guards needed before opening:
+Register the open/close callback on **`lv_screen_active()`** (trap 2 — `menu_panel` never sees it)
+and a second one on the tray itself so an upward swipe on the tray can close it. Set
+`GESTURE_BUBBLE` on the tray's non-interactive layout containers (header, the two slider rows, the
+footer) so a swipe on them reaches the tray; deliberately leave it off the sliders, which must
+consume their own drags.
 
-- `lv_obj_has_flag(main_screen, LV_OBJ_FLAG_HIDDEN)` → the clock face is up; the touch should just
-  wake the device.
-- Launcher tile only — implicit if the callback is on `menu_panel`, otherwise
-  `lv_tileview_get_tile_active(main_screen) != menu_panel`.
-- If using the indev-level callback, also reject gestures made over a modal:
-  `lv_obj_get_screen(gobj) != lv_screen_active()`. `create_msgbox()` calls `lv_msgbox_create(NULL)`
-  (`ui_tools.cpp:142`), which parents the msgbox to layer_top, so this one comparison covers both
-  msgboxes and the tray itself.
+Guards needed before opening, all verified necessary on the prototype:
 
-Then `tray_open(); lv_indev_wait_release(indev);`.
+```c
+if (tray_state != TRAY_CLOSED || dir != LV_DIR_BOTTOM) return;
+/* clock face is up - the touch should just wake the device */
+if (lv_obj_has_flag(main_screen, LV_OBJ_FLAG_HIDDEN)) return;
+/* launcher tile only; NULL means "never navigated" == launcher (trap 3) */
+lv_obj_t *tile = lv_tileview_get_tile_active(main_screen);
+if (tile && tile != menu_panel) return;
 
-Note LVGL's `gesture_min_velocity` is 3 px/sample — a very slow "pull down" never registers as a
-gesture. Inherent to LVGL; worth knowing when testing.
+tray_open();
+lv_indev_wait_release(indev);      /* or the icon underneath gets clicked */
+```
+
+A modal guard is not needed when the callback is on the screen: `create_msgbox()` calls
+`lv_msgbox_create(NULL)` (`ui_tools.cpp:142`), which parents the msgbox to layer_top, so a gesture
+over it resolves to layer_top and never reaches the screen callback. If you attach to the **indev**
+instead, that free guard disappears and you must add
+`lv_obj_get_screen(gobj) != lv_screen_active()` explicitly.
+
+Two gesture-threshold facts, both observed:
+
+- LVGL needs 50 px of travel **and** ≥3 px per input sample; any sample with less movement *resets*
+  the accumulator. Stop-start drags therefore never fire — this bites synthetic/scripted input
+  especially hard, and makes a slow deliberate pull-down feel dead.
+- An upward swipe to close has at most `tray_height` of travel, and starting near the top of the
+  tray leaves barely over the 50 px threshold, so it is unreliable there. This is exactly why the
+  grabber button and the scrim tap are not optional extras — keep all three close paths.
 
 ## Step 5 — Idle / low-power interaction
 
@@ -273,12 +336,30 @@ ships both.
 ```bash
 pio run -e emulator_watch_ultra -t exec    # 502x410, USING_TOUCHPAD defined
 pio run -e emulator_twatchs3   -t exec     # 240x240, USING_TOUCHPAD defined
-pio run -e emulator_lora_pager             # compile-only: proves the stub path builds
 pio run -e tlora_pager                     # the real exclusion check
 ```
 
 The SDL mouse is a `LV_INDEV_TYPE_POINTER`, so press-and-drag down is a genuine gesture. Requires
-X11/`DISPLAY` forwarding — commented out in `.devcontainer/devcontainer.json`.
+X11/`DISPLAY` forwarding — commented out in `.devcontainer/devcontainer.json`. A headless
+`Xvfb` + `xdotool` setup also works and is what validated this plan; drive the drag as one
+continuous motion, since stop-start movement never crosses LVGL's gesture threshold (Step 4).
+
+**`emulator_lora_pager` cannot serve as the stub-path check — it is already broken on `master`**
+(`ui_walkie.cpp:40`, `fatal error: esp_now.h: No such file or directory`), independent of this
+feature. Verify the compiled-out path instead with a direct syntax check, which does pass:
+
+```bash
+git clone --depth 1 -b v9.2.2 https://github.com/lvgl/lvgl /tmp/lvgl
+g++ -fsyntax-only -std=gnu++17 -I/tmp/lvgl -I/tmp/lvgl/src -Isrc/factory \
+    -DLV_CONF_SKIP -DLV_CONF_INCLUDE_SIMPLE -DLV_USE_FLOAT=1 \
+    -DLV_FONT_MONTSERRAT_24=1 -DLV_FONT_MONTSERRAT_22=1 -DLV_FONT_MONTSERRAT_16=1 \
+    -DLV_FONT_MONTSERRAT_12=1 -DARDUINO_LILYGO_LORA_SX1262 \
+    -DARDUINO_T_LORA_PAGER  src/factory/ui_tray.cpp     # and the two watch macros
+```
+
+If PlatformIO's registry (`api.registry.platformio.org`) is unreachable from your environment, the
+`native` platform, `lvgl`, `RadioLib`, `XPowersLib` and `SensorLib` can all be sourced from git
+tags into `.pio/libdeps/<env>/`, and `tool-scons` from PyPI — that is how the prototype was built.
 
 Emulator behaviours that are **not** bugs: battery percent jitters every second
 (`hal_interface.cpp:1578` returns `30 + rand() % 71` per call); the brightness slider moves but
@@ -307,12 +388,19 @@ Step 5 logic is genuinely testable.
 Test 11 catches the `lv_layer_top()` hit-testing trap. Test 2 catches a missing
 `lv_indev_wait_release()`. Test 6 catches a broken low-power save/restore.
 
+Tests 1, 2, 6, 7 and 11 were exercised on the prototype in the emulator and pass. Tests 9, 10 and
+12 need hardware (`hw_set_user_setting()` does not persist natively). One defect the prototype
+surfaced and did **not** fix: on 240×240 the header's battery bar and the volume slider run to the
+very right edge — the row containers need real horizontal padding at that size, so budget a layout
+pass on the small screen rather than assuming the 502×410 spacing scales down.
+
 ## Suggested build order
 
 1. `ui_define.h` declarations + `SCREEN_TIMEOUT` move.
 2. `ui_main.cpp`: `ui_launch_app()`, gesture-bubble flags, `tray_init()` call site.
-3. `ui_tray.cpp` skeleton with the `#if` / `#else` stubs — **build `emulator_lora_pager` now**, the
-   cheapest check that the stub path and header changes are sound.
+3. `ui_tray.cpp` skeleton with the `#if` / `#else` stubs — run the `g++ -fsyntax-only` check above
+   for all three board macros now, the cheapest check that the stub path and header changes are
+   sound (`emulator_lora_pager` can't do this job; see Verification).
 4. Object tree + sizing, hidden-when-closed. Wire `tray_open()` to a debug trigger and **verify
    test 11 before adding any content**.
 5. Animations, state enum, the three close paths.
@@ -325,9 +413,16 @@ Test 11 catches the `lv_layer_top()` hit-testing trap. Test 2 catches a missing
 
 ## Open risks
 
-- **Two LVGL versions.** Emulator pins 9.2.2, hardware uses ^9.4.0. Every API above exists in both,
-  but avoid the v8 spellings: `lv_anim_set_time`, `lv_anim_set_ready_cb`, `lv_anim_del`,
-  `lv_obj_clear_flag`, `lv_indev_get_act`.
+- **Two LVGL versions.** Emulator pins 9.2.2, hardware uses ^9.4.0. Every API above was compiled
+  against 9.2.2 headers, but avoid the v8 spellings: `lv_anim_set_time`, `lv_anim_set_ready_cb`,
+  `lv_anim_del`, `lv_obj_clear_flag`, `lv_indev_get_act`. **The prototype was only ever built
+  against 9.2.2** — the hardware envs need the ESP32 toolchain, so nothing here is compile-verified
+  against 9.4.0.
+- **No hardware build was verified.** `twatchs3`, `twatch_ultra` and `tlora_pager` all require the
+  ESP32 toolchain; only the native emulator envs were built. Treat the first hardware build as a
+  real step, not a formality.
+- **240×240 layout needs a padding pass** (see Verification) — it renders and is usable, but
+  content reaches the right edge.
 - **`exit_func_cb` is dead code**, so there is no central hook for "an app is closing". If the tray
   ever needs to react to that, it has to go through each app's own back handler.
 - **T-LoRa-Pager is excluded, not supported.** If it is ever wanted there, the tray needs an
