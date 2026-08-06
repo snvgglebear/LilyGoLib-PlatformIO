@@ -34,7 +34,7 @@ typedef enum {
 /* Radio frequency constants */
 // #define RADIO_FIXED_FREQUENCY  920.0
 // #define RADIO_FIXED_FREQUENCY_STRING "920MHZ"
-#define RADIO_DEFAULT_FREQUENCY  868.0
+#define RADIO_DEFAULT_FREQUENCY  916.0
 
 // Check if not compiling for Arduino environment
 // If not, define the wl_status_t enumeration
@@ -1533,8 +1533,8 @@ void hw_set_audio_effect_ab_class(bool enable);
 #elif defined(ARDUINO_T_WATCH_S3_ULTRA)
 
 #define USING_TOUCHPAD
-#define FLOAT_BUTTON_WIDTH  60
-#define FLOAT_BUTTON_HEIGHT 60
+#define FLOAT_BUTTON_WIDTH  80
+#define FLOAT_BUTTON_HEIGHT 80
 #define USING_BLE_KEYBOARD
 #ifndef USING_BHI260_SENSOR
 #define USING_BHI260_SENSOR
