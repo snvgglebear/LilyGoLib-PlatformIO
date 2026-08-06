@@ -1,0 +1,54 @@
+{
+    "name": "PlatformIO-Snvgglebear",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "platformio.platformio-ide",
+                "ms-vscode.cpptools",
+                "anthropic.claude-code"
+            ],
+            "settings": {
+                // Let the extension install and manage its own PlatformIO
+                // Core in ~/.platformio/penv (persisted by the volume below).
+                // Pointing it at the pip-installed core instead
+                // (useBuiltinPIOCore: false) fails the extension's
+                // compatibility check on activation.
+                "platformio-ide.useBuiltinPIOCore": true
+            }
+        }
+    },
+    // Persistent homes across container rebuilds:
+    //  - platformio-core: PlatformIO's toolchain downloads, penv, and cache
+    //  - claude-code: Claude Code auth/config, so login survives rebuilds
+    "mounts": [
+        "source=platformio-core,target=/home/vscode/.platformio,type=volume",
+        "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+		"source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind,consistency=cached",
+	 	"source=${localEnv:HOME}/GitHub/agentic-csa,target=/opt/agentic-csa,type=bind" 
+    ],
+    "containerEnv": {
+        // Keep ALL Claude Code state (including what would otherwise live at
+        // ~/.claude.json, outside the volume) inside the persisted volume.
+        "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+    },
+    // Named volumes are created root-owned on first use; hand them to the
+    // container user before PlatformIO / Claude Code try to write to them.
+    "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.platformio /home/vscode/.claude && pio pkg update",
+    "remoteUser": "vscode"
+
+    // Flashing a board over USB (`pio run -t upload`) or running an
+    // emulator_* target with a display requires extra host access that
+    // varies by platform, so it's left commented out rather than assumed:
+    //
+    // USB passthrough (Linux hosts only):
+    // "runArgs": ["--device=/dev/bus/usb"],
+    //
+    // X11 forwarding, to view the SDL2 emulator window (Linux hosts only,
+    // run `xhost +local:` on the host first): add this bind to "mounts"
+    // above and DISPLAY to "containerEnv":
+    // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+    // "DISPLAY": "${localEnv:DISPLAY}"
+}
