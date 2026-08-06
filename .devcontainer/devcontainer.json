@@ -1,0 +1,39 @@
+{
+    "name": "PlatformIO-Snvgglebear",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "platformio.platformio-ide",
+                "ms-vscode.cpptools"
+            ],
+            "settings": {
+                "platformio-ide.useBuiltinPIOCore": false
+            }
+        }
+    },
+    // Give PlatformIO's ESP32 toolchain downloads and the .pio build cache a
+    // persistent home across container rebuilds.
+    "mounts": [
+        "source=platformio-core,target=/home/vscode/.platformio,type=volume"
+    ],
+    "postCreateCommand": "pio pkg update",
+    "remoteUser": "vscode"
+
+    // Flashing a board over USB (`pio run -t upload`) or running an
+    // emulator_* target with a display requires extra host access that
+    // varies by platform, so it's left commented out rather than assumed:
+    //
+    // USB passthrough (Linux hosts only):
+    // "runArgs": ["--device=/dev/bus/usb"],
+    //
+    // X11 forwarding, to view the SDL2 emulator window (Linux hosts only,
+    // run `xhost +local:` on the host first):
+    // "mounts": [
+    //     "source=platformio-core,target=/home/vscode/.platformio,type=volume",
+    //     "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+    // ],
+    // "containerEnv": { "DISPLAY": "${localEnv:DISPLAY}" }
+}
