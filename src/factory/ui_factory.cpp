@@ -6,11 +6,22 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief Screen test -- the display panel acceptance test.
+ *
+ * Cycles the whole screen through a grey gradient and a series of flat primary
+ * colours on a timer. This is a production check: dead or stuck pixels, backlight
+ * non-uniformity, and colour-channel faults are all obvious against a full-screen
+ * flat fill, and the gradient exposes banding or a mis-set colour depth.
+ *
+ * The gradient is generated at runtime into a buffer sized to the panel, so the
+ * same code works on every board without a per-resolution asset.
+ */
 #include "ui_define.h"
 
-static uint8_t *image_data = NULL;
-static lv_timer_t *timer = NULL;
-static uint8_t nextColors = 0;
+static uint8_t *image_data = NULL;  ///< runtime-generated gradient bitmap; freed on exit
+static lv_timer_t *timer = NULL;    ///< advances to the next test pattern
+static uint8_t nextColors = 0;      ///< index of the pattern currently shown
 
 static void generate_gray_gradient(uint8_t *image_data, uint16_t width, uint16_t height)
 {

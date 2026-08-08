@@ -6,6 +6,24 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief WiFi app -- scan for networks and join one.
+ *
+ * Scans, presents the results in a dropdown, takes a password, and hands the
+ * credentials to hw_set_wifi_connect(). The connection attempt itself is shown
+ * by the modal progress bar in ui_msg.cpp, which reports success (with the
+ * assigned IP) or the specific reason for failure.
+ *
+ * Joining a network is what enables NTP time sync -- see the WiFiGotIP handler
+ * in factory.ino, which starts SNTP once an IP is assigned and writes the
+ * corrected time into the hardware RTC.
+ *
+ * Text entry follows the same pattern as the chat app: an on-screen LVGL
+ * keyboard on touch boards, the physical keyboard on the T-LoRa-Pager.
+ *
+ * Credentials are used for the current session only; nothing is stored here
+ * (factory.ino explicitly disables WiFi's own credential persistence).
+ */
 #include "ui_define.h"
 
 
@@ -14,10 +32,10 @@ static lv_obj_t *keyboard = NULL;
 #endif
 
 static lv_obj_t *menu = NULL;
-static char wifi_ssid[64];
-static char wifi_password[128];
-static lv_obj_t *wifi_dd;
-static bool scanning = false;
+static char wifi_ssid[64];          ///< SSID chosen from the scan results
+static char wifi_password[128];     ///< password as typed
+static lv_obj_t *wifi_dd;           ///< dropdown listing the scan results
+static bool scanning = false;       ///< a scan is in flight; blocks starting another
 
 extern void ui_show_wifi_process_bar();
 

@@ -5,6 +5,25 @@
  * @copyright Copyright (c) 2025  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2025-04-24
  *
+ * @brief     RadioLib driver for the Semtech SX1262 sub-GHz LoRa transceiver.
+ *
+ * One of five interchangeable radio back ends (hw_sx1262, hw_sx1280, hw_lr1121,
+ * hw_cc1101, hw_nrf2401). Exactly one is compiled into a given firmware image:
+ * the whole file is wrapped in `#ifdef ARDUINO_LILYGO_LORA_SX1262`, and that
+ * macro comes from the single uncommented `ARDUINO_LILYGO_LORA_*` build flag in
+ * platformio.ini. The others compile to nothing.
+ *
+ * Every back end implements the same contract, so ui_radio.cpp and the
+ * messaging apps work with whichever module is fitted:
+ *   - hw_radio_begin() / hw_set_radio_params() / hw_get_radio_params()
+ *   - hw_set_radio_listening() / hw_set_radio_tx() / hw_get_radio_rx()
+ *   - the radio_get_*_list() / radio_get_*_from_index() pairs that populate the
+ *     settings dropdowns with the values *this* module actually supports.
+ *
+ * The SX1262 covers roughly 150-960 MHz with up to +22 dBm output.
+ *
+ * @see SX1262 datasheet: https://www.semtech.com/products/wireless-rf/lora-connect/sx1262
+ * @see RadioLib API:     https://jgromes.github.io/RadioLib/class_s_x1262.html
  */
 
 #include "hal_interface.h"
@@ -14,11 +33,22 @@
 #ifdef ARDUINO
 #include <LilyGoLib.h>
 
-static EventGroupHandle_t radioEvent = NULL;
-static uint32_t last_send_millis = 0;
+static EventGroupHandle_t radioEvent = NULL;    ///< signals "radio IRQ fired" to waiting code
+static uint32_t last_send_millis = 0;           ///< millis() of the last transmit, for the RX self-echo filter
 
-#define LORA_ISR_FLAG                  _BV(0)
+#define LORA_ISR_FLAG                  _BV(0)   ///< the only bit in radioEvent
 
+/**
+ * Radio interrupt handler (DIO1). Fires on packet-sent and packet-received.
+ *
+ * Deliberately minimal: an ISR cannot touch the SPI bus or block, so it only
+ * sets an event-group bit and returns. The actual register reads happen later in
+ * hw_get_radio_rx()/hw_set_radio_tx(), which wait on that bit.
+ *
+ * portYIELD_FROM_ISR() requests a context switch on exit if setting the bit
+ * unblocked a task of higher priority than the interrupted one, so the radio is
+ * serviced immediately rather than at the next tick.
+ */
 static void hw_radio_isr()
 {
     BaseType_t xHigherPriorityTaskWoken, xResult;
@@ -32,6 +62,10 @@ static void hw_radio_isr()
     }
 }
 
+/**
+ * Create the event group and hook the radio's IRQ. Called once from hw_init().
+ * The chip itself was already reset and probed by instance.begin().
+ */
 void hw_radio_begin()
 {
     radioEvent = xEventGroupCreate();
@@ -41,6 +75,20 @@ void hw_radio_begin()
 }
 #endif
 
+/**
+ * Apply a complete radio configuration and put the chip into the requested mode.
+ *
+ * Each setter is checked individually and a failure is only logged, not fatal:
+ * an out-of-range value leaves that one parameter at its previous setting while
+ * the rest still apply. Only the *last* call's status is returned, so the return
+ * value is not a reliable indicator that everything took effect.
+ *
+ * All SPI traffic is bracketed by instance.lockSPI()/unlockSPI() because the
+ * radio shares its bus with the display and SD card on these boards.
+ *
+ * @return the RadioLib status of the final operation (RADIOLIB_ERR_NONE == 0 on success)
+ * @see    https://jgromes.github.io/RadioLib/group__status__codes.html
+ */
 int16_t hw_set_radio_params(radio_params_t &params)
 {
     printf("Set radio params:\n");
@@ -102,12 +150,17 @@ int16_t hw_set_radio_params(radio_params_t &params)
         Serial.println(F("Selected output power is invalid for this module!"));
     }
 
-    // Set Current Limit
+    // Over-current protection for the power amplifier, in mA. 140 mA is the
+    // headroom the SX1262 needs at its +22 dBm maximum; setting it too low makes
+    // the chip trip and abort transmissions.
     state = radio.setCurrentLimit(140);
     if (state == RADIOLIB_ERR_INVALID_CURRENT_LIMIT) {
         Serial.println(F("Selected current limit is invalid for this module!"));
     }
 
+    // Enter the requested mode. startTransmit()/startReceive() are the
+    // non-blocking variants -- they arm the chip and return immediately, with
+    // completion reported through hw_radio_isr().
     printf("Mode: ");
     switch (params.mode) {
     case RADIO_DISABLE:
@@ -115,6 +168,8 @@ int16_t hw_set_radio_params(radio_params_t &params)
         state =  radio.standby();
         break;
     case RADIO_TX:
+        // Priming transmit with an empty payload arms the IRQ, so the first real
+        // hw_set_radio_tx() call has a "previous send finished" event to consume.
         printf("RADIO_TX\n");
         state =  radio.startTransmit("");
         break;
@@ -123,6 +178,8 @@ int16_t hw_set_radio_params(radio_params_t &params)
         state =  radio.startReceive();
         break;
     case RADIO_CW:
+        // Continuous-wave test mode is accepted but not implemented here; the
+        // chip is left in whatever state the setters above put it in.
         printf("RADIO_CW\n");
         break;
     default:
@@ -135,19 +192,31 @@ int16_t hw_set_radio_params(radio_params_t &params)
 #endif
 }
 
+/**
+ * Fill `params` with this module's factory-default LoRa settings.
+ *
+ * Despite the "get" name this reports the defaults, not the chip's live
+ * configuration -- nothing is read back over SPI.
+ *
+ * The chosen defaults favour range over throughput: SF12 with 125 kHz bandwidth
+ * is the slowest, longest-reach LoRa mode, and 22 dBm is the SX1262's maximum
+ * output. Expect several seconds of air-time per packet at these settings.
+ * 0xCD is a widely used private-network sync word (0x34 is reserved for LoRaWAN).
+ */
 void hw_get_radio_params(radio_params_t &params)
 {
     params.bandwidth = 125.0;
     params.freq = RADIO_DEFAULT_FREQUENCY;
-    params.cr = 5;
+    params.cr = 5;                          // 4/5, the lightest error correction
     params.isRunning = false;
     params.mode = RADIO_DISABLE;
-    params.sf  = 12;
-    params.power = 22;
+    params.sf  = 12;                        // maximum spreading factor: longest range, slowest
+    params.power = 22;                      // dBm, module maximum
     params.interval = 3000;
     params.syncWord = 0xCD;
 }
 
+/// Reset the radio to the defaults above and apply them.
 void hw_set_radio_default()
 {
     radio_params_t params ;
@@ -155,6 +224,10 @@ void hw_set_radio_default()
     hw_set_radio_params(params);
 }
 
+/**
+ * Re-arm the receiver. A LoRa chip leaves receive mode after each packet, so
+ * this must be called again to hear the next one.
+ */
 void hw_set_radio_listening()
 {
 #ifdef ARDUINO
@@ -165,6 +238,19 @@ void hw_set_radio_listening()
 #endif
 }
 
+/**
+ * Queue a packet for transmission (non-blocking).
+ *
+ * With `continuous` set -- the beacon/repeat-send mode -- the call first waits
+ * up to 2 ms for the previous transmission's completion IRQ and gives up if it
+ * has not arrived, so a caller looping on this never blocks the UI: it simply
+ * skips this round and retries. `pdTRUE, pdTRUE` means the flag is cleared on
+ * exit and all requested bits must be set.
+ *
+ * @param params      data/length in, RadioLib status out (-1 if the call was skipped)
+ * @param continuous  true when called repeatedly from a send loop; false for a
+ *                    one-shot send that should not wait on a prior packet
+ */
 void hw_set_radio_tx(radio_tx_params_t &params, bool continuous)
 {
 #ifdef ARDUINO
@@ -178,6 +264,8 @@ void hw_set_radio_tx(radio_tx_params_t &params, bool continuous)
         }
     }
 
+    // Clean up after the previous packet: clears IRQ flags and drops the chip
+    // back to standby. Required before arming another transmit.
     radio.finishTransmit();
 
     if (!params.data) {
@@ -201,6 +289,23 @@ void hw_set_radio_tx(radio_tx_params_t &params, bool continuous)
 #endif
 }
 
+/**
+ * Poll for a received packet.
+ *
+ * Designed to be called from the UI refresh loop: it waits at most 2 ms for the
+ * receive IRQ and returns state -1 if nothing arrived, so polling is cheap.
+ * On success the payload, RSSI and SNR are read out and the receiver is
+ * immediately re-armed.
+ *
+ * The `last_send_millis` check suppresses packets seen within 200 ms of our own
+ * transmission, so half-duplex self-echo does not appear as an incoming message
+ * in the chat apps. Note this discards *any* packet in that window, including a
+ * genuine reply from a nearby peer.
+ *
+ * @note `params.data[params.length] = '\0'` writes one byte past the payload so
+ *       the buffer can be printed as a C string -- the caller's buffer must
+ *       therefore be at least one byte larger than the largest packet expected.
+ */
 void hw_get_radio_rx(radio_rx_params_t &params)
 {
 #ifdef ARDUINO
@@ -262,6 +367,14 @@ void hw_get_radio_rx(radio_rx_params_t &params)
 #endif
 }
 
+/**
+ * Blocking transmit, used by the chat/walkie apps where a simple synchronous
+ * send is easier to reason about than the IRQ-driven path above. Returns only
+ * once the packet is fully on the air -- which at SF12 can take seconds, so this
+ * must not be called from the LVGL thread without expecting a visible stall.
+ *
+ * Records the send time so hw_get_radio_rx() can filter out our own echo.
+ */
 bool radio_transmit(const uint8_t *data, size_t length)
 {
 #ifdef ARDUINO
@@ -274,6 +387,21 @@ bool radio_transmit(const uint8_t *data, size_t length)
 }
 
 
+// ---------------------------------------------------------------------------
+// Settings-dropdown backing data.
+//
+// Each option list exists twice: once as a newline-separated string for LVGL's
+// dropdown widget, and once as a numeric array indexed by the widget's selection.
+// The two must be kept in the same order and the same length -- the UI has no
+// way to detect a mismatch.
+//
+// The values are module-specific, which is why every hw_*.cpp carries its own
+// copy: the SX1262 is a sub-GHz part, so these are the ISM bands between 433 and
+// 945 MHz, and power tops out at the +22 dBm the chip supports.
+//
+// Defining RADIO_FIXED_FREQUENCY (see hal_interface.h) collapses the frequency
+// list to a single entry, for builds that must not be retunable.
+// ---------------------------------------------------------------------------
 static const float bandwidth_list[] = {41.7, 62.5, 125.0, 250.0, 500.0};
 static const float power_level_list[] = {2, 5, 10, 12, 17, 20, 22};
 #ifdef RADIO_FIXED_FREQUENCY
@@ -306,6 +434,17 @@ const char *radio_get_freq_list()
 #endif
 }
 
+/**
+ * Map a dropdown selection index back to a frequency in MHz, falling back to
+ * RADIO_DEFAULT_FREQUENCY if the index is out of range.
+ *
+ * @note The bounds test is `>` rather than `>=`, so an index exactly equal to
+ *       the list length reads one element past the end of freq_list[] instead of
+ *       taking the fallback. In practice LVGL never reports a selection beyond
+ *       the last option, so the case is unreachable from the UI. The same
+ *       pattern appears in the bandwidth and power lookups below, and in the
+ *       other hw_*.cpp radio back ends.
+ */
 float radio_get_freq_from_index(uint8_t index)
 {
     if (index > radio_get_freq_length()) {

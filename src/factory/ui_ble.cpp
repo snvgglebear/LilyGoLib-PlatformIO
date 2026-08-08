@@ -6,13 +6,25 @@
  * @date      2025-02-13
  *
  */
+/**
+ * @brief BLE serial app -- a Nordic UART-style bridge over Bluetooth LE.
+ *
+ * Brings up a BLE peripheral under a user-editable device name and displays
+ * whatever a connected client writes to it. Useful as a connectivity test: pair
+ * from a phone with any BLE terminal app and text typed there appears here.
+ *
+ * The BLE stack is started on entering the app and shut down again on leaving
+ * (hw_disable_ble() then hw_deinit_ble()) -- the radio and its stack are
+ * expensive to leave running, and the BLE keyboard app cannot start while this
+ * one holds the controller.
+ */
 #include "ui_define.h"
 
 
-static lv_timer_t *timer = NULL;
+static lv_timer_t *timer = NULL;        ///< polls for incoming BLE data
 static lv_obj_t *menu = NULL;
-static lv_obj_t *msg_ta = NULL;
-static lv_obj_t *ble_name_ta = NULL;
+static lv_obj_t *msg_ta = NULL;         ///< received-text display
+static lv_obj_t *ble_name_ta = NULL;    ///< editable advertised device name
 static lv_obj_t *quit_btn = NULL;
 
 static void back_event_handler(lv_event_t *e)

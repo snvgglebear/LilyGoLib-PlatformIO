@@ -6,11 +6,28 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief Settings and system information.
+ *
+ * Two things in one screen: the editable device settings (display brightness,
+ * keyboard backlight, screen timeout, charge current) and a read-only system
+ * information page -- firmware hash, chip ID, Arduino core version, storage
+ * size, and the peripheral probe list showing which chips answered at boot.
+ *
+ * Edits are made against `local_param`, a working copy, and written back through
+ * hw_set_user_setting() -- which persists them to NVS so they survive a reboot.
+ * Slider ranges come from the hw_get_disp_ and hw_get_charge accessors rather
+ * than being hard-coded, since the limits differ per board (the watches take a
+ * 0-255 backlight level, the Pager 0-16).
+ *
+ * @see hal_interface.h: user_setting_params_t, and the HW_*_ONLINE probe bits.
+ */
 #include "ui_define.h"
 
 static lv_obj_t *menu = NULL;
-static lv_timer_t *timer = NULL;
+static lv_timer_t *timer = NULL;            ///< refreshes the live status labels
 static lv_group_t *menu_g;
+/// Working copy of the persisted settings, edited by the controls on this screen.
 static  user_setting_params_t local_param;
 static uint32_t get_ip_id = 0;
 static lv_obj_t *quit_btn = NULL;

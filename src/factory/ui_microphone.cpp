@@ -6,13 +6,33 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief Microphone spectrum analyser -- a live stereo FFT display.
+ *
+ * Renders two rows of FREQ_BANDS bars, one per channel, driven by the FFT
+ * computed in hal_interface.cpp. Doubles as the microphone acceptance test: both
+ * channels should respond to sound, and a silent or stuck row points at a dead
+ * microphone or a mis-configured codec.
+ *
+ * Each band covers a flat SAMPLE_RATE/2/FREQ_BANDS slice of the spectrum -- 500 Hz
+ * per bar at the default 16 kHz sample rate. Bar heights are the 0..1 magnitudes
+ * produced by process_channel_fft(), which maps a -40..0 dBFS window onto that
+ * range, so anything quieter than -40 dBFS shows as nothing.
+ *
+ * @see hal_interface.cpp: process_channel_fft(), hw_audio_get_fft_data().
+ * @see hal_interface.h:   FFT_SIZE, SAMPLE_RATE, FREQ_BANDS.
+ */
 #include "ui_define.h"
 
+// Bar geometry, in pixels.
 #define BAR_WIDTH 8
 #define BAR_HEIGHT 75
 #define BAR_SPACING 2
-#define CHANNEL_Y_OFFSET 90
+#define CHANNEL_Y_OFFSET 90     ///< vertical gap between the left and right rows
 
+// Colour gradient across the bars, as HSV. The two channels use opposite halves
+// of the colour wheel (left 180-360 degrees, right 0-180) so they are easy to
+// tell apart at a glance.
 #define HUE_START 180
 #define HUE_END 360
 #define HUE_START_R 0
@@ -20,7 +40,7 @@
 #define SATURATION 100
 #define VALUE 100
 
-static lv_timer_t *timer = NULL;
+static lv_timer_t *timer = NULL;    ///< pulls a new FFT frame and redraws the bars
 static lv_obj_t *menu = NULL;
 static lv_obj_t *quit_btn = NULL;
 static lv_obj_t *left_freq_bars[FREQ_BANDS];

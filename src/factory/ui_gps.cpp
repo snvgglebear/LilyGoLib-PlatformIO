@@ -6,8 +6,29 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief GNSS status app -- live fix data from the on-board receiver.
+ *
+ * Shows latitude/longitude, UTC time, ground speed, satellite count, the number
+ * of NMEA bytes received, and the state of the pulse-per-second line, refreshed
+ * on a timer.
+ *
+ * Two of these fields are diagnostics rather than navigation data, and are the
+ * reason this screen exists as a factory test:
+ *   - `rx_size` counts bytes arriving on the UART, so a non-zero value proves
+ *     the receiver is wired up and talking even with no satellites in view;
+ *   - `pps` toggles only once the receiver has a valid time solution, giving a
+ *     hardware-level confirmation of a fix (see hw_gps_attach_pps()).
+ *
+ * A cold start with no almanac can take minutes to produce a first fix, and
+ * needs a clear view of the sky -- indoors it may never resolve.
+ *
+ * @see hal_interface.cpp: hw_get_gps_info(), which is rate-limited to 1 Hz.
+ */
 #include "ui_define.h"
 
+/// Cached label widgets, so the refresh timer can update text without searching
+/// the object tree each tick.
 typedef struct {
     lv_obj_t *lat;
     lv_obj_t *lng;

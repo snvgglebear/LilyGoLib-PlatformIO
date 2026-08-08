@@ -6,9 +6,25 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief Power monitor -- live battery and charger telemetry.
+ *
+ * Displays everything the power hardware can report: battery and system
+ * voltages, USB input voltage, charge state and temperature, and -- on boards
+ * with a dedicated fuel gauge -- remaining and full-charge capacity,
+ * instantaneous current, average power, and estimated time to empty or full.
+ *
+ * How many of these rows are meaningful depends on the chip fitted. A board with
+ * only a PMU reports voltages and a coarse percentage; the capacity and current
+ * figures need a coulomb-counting gauge. See monitor_params_type_t in
+ * hal_interface.h, which records which source filled the struct.
+ *
+ * @see hal_interface.h: monitor_params_t for the units of each field.
+ */
 #include "ui_define.h"
 
 
+/// One label per telemetry field, cached for the refresh timer.
 typedef struct {
     lv_obj_t *charge_state;
     lv_obj_t *battery_voltage;

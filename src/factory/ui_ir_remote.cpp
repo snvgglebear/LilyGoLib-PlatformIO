@@ -6,10 +6,24 @@
  * @date      2025-05-15
  *
  */
+/**
+ * @brief Infrared remote -- transmit a NEC-protocol IR code.
+ *
+ * Lets the user type a 32-bit hex code and fire it from the IR LED. NEC is the
+ * most common consumer-IR encoding (TVs, air conditioners, set-top boxes), so a
+ * captured code from an existing remote can be replayed here.
+ *
+ * Only built when USING_IR_REMOTE is defined -- boards without an IR emitter
+ * omit the app entirely.
+ *
+ * @see NEC protocol reference: https://www.sbprojects.net/knowledge/ir/nec.php
+ */
 #include "ui_define.h"
 
 #if defined(USING_IR_REMOTE)
 static lv_obj_t *menu = NULL;
+/// Code to transmit. The default is a placeholder used by the factory test rig;
+/// the text field overwrites it with whatever the user enters.
 static uint32_t nec_code = 0x12345678;  // LilyGo Factory ir remote test nec code
 static lv_obj_t *keyboard = NULL;
 static lv_obj_t *input_textarea = NULL;

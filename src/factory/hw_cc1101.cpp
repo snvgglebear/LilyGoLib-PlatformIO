@@ -5,6 +5,27 @@
  * @copyright Copyright (c) 2025  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2025-04-24
  *
+ * @brief     RadioLib driver for the Texas Instruments CC1101 sub-GHz FSK transceiver.
+ *
+ * One of five interchangeable radio back ends; compiled only when
+ * `ARDUINO_LILYGO_LORA_CC1101` is the uncommented `ARDUINO_LILYGO_LORA_*` build
+ * flag in platformio.ini. The IRQ/event-group plumbing matches hw_sx1262.cpp,
+ * which documents that shared pattern in detail.
+ *
+ * Important distinction: despite living behind the same `hw_radio_*` interface
+ * as the LoRa parts, the CC1101 is *not* a LoRa radio. It is a conventional
+ * (G)FSK/OOK transceiver, so the `sf` and `cr` fields of radio_params_t have no
+ * meaning here -- there is no spreading factor and no LoRa coding rate. What
+ * governs its link instead is the symbol rate and frequency deviation, which are
+ * fixed by the two constants below rather than being exposed in the UI.
+ *
+ * Practical consequences: much higher data rates than LoRa, but far less
+ * sensitivity, so range is shorter and the link is less tolerant of noise.
+ * Output power tops out at +10 dBm, and it can tune down to 387 MHz -- lower
+ * than the other sub-GHz parts here.
+ *
+ * @see CC1101 datasheet: https://www.ti.com/product/CC1101
+ * @see RadioLib API:     https://jgromes.github.io/RadioLib/class_c_c1101.html
  */
 
 #include "hal_interface.h"
@@ -14,14 +35,20 @@
 
 #include <LilyGoLib.h>
 
-static EventGroupHandle_t radioEvent = NULL;
-static uint32_t last_send_millis = 0;
+static EventGroupHandle_t radioEvent = NULL;    ///< signals "radio IRQ fired"
+static uint32_t last_send_millis = 0;           ///< used to filter our own transmissions out of RX
 
 #define LORA_ISR_FLAG                  _BV(0)
 
+/// Symbol rate in kbps. Both ends of a link must agree on this exactly.
 #define RADIO_DEFAULT_BIT_RATE      38.4    //kbps
+/// FSK frequency deviation in kHz -- how far the carrier shifts to encode a bit.
+/// A rule of thumb is that deviation should be roughly half the bit rate; too
+/// small and the receiver cannot discriminate the symbols, too large and the
+/// signal exceeds the receiver's filter bandwidth.
 #define RADIO_DEFAULT_DEV_FREQ      20.0
 
+/// Packet-sent/received interrupt; sets an event bit only. See hw_sx1262.cpp.
 static void hw_radio_isr()
 {
     BaseType_t xHigherPriorityTaskWoken, xResult;
@@ -274,6 +301,21 @@ bool radio_transmit(const uint8_t *data, size_t length)
 }
 
 
+// ---------------------------------------------------------------------------
+// Settings-dropdown backing data, specific to the CC1101.
+//
+// `bandwidth_list` here is the receiver's IF filter bandwidth in kHz, not a LoRa
+// channel bandwidth: it must be wide enough to pass the modulated signal
+// (roughly bit rate + 2x deviation) but no wider, since excess bandwidth only
+// admits more noise.
+//
+// Power spans -30 to +10 dBm -- note the negative entries, which the LoRa parts
+// do not offer; they are useful for bench testing two units on a desk without
+// saturating each other's front ends.
+//
+// The frequency list covers the 387-928 MHz range the part supports. As always,
+// which of these are legal to transmit on depends on your region.
+// ---------------------------------------------------------------------------
 static const float bandwidth_list[] = {0.025, 5, 10, 20, 30, 60, 80, 100, 120, 150, 200, 300, 400, 500, 600};
 static const float power_level_list[] = {-30, -20, -15, -10, 0, 5, 7, 10};
 static const float freq_list[] = {387.0, 400.0, 410.0,

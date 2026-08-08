@@ -6,10 +6,28 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief IMU app -- live orientation from the motion sensor.
+ *
+ * Shows roll, pitch and heading, refreshed on a timer, with an image that
+ * rotates to follow the device.
+ *
+ * Which sensor supplies the data depends on the board: the BHI260AP smart sensor
+ * hub (T-Watch-Ultra, T-LoRa-Pager) fuses the axes on-chip and returns ready-made
+ * angles, while the older BMA423 (T-Watch-S3) is a bare accelerometer. Either
+ * way the app reads the same imu_params_t.
+ *
+ * Heading is only trustworthy where a magnetometer is fitted and calibrated;
+ * without one it is derived from the accelerometer alone and will drift.
+ *
+ * @see hal_interface.h: imu_params_t, and the USING_BHI260_SENSOR /
+ *      USING_BMA423_SENSOR per-board flags.
+ */
 #include "ui_define.h"
 
 LV_IMG_DECLARE(img_dog);
 
+/// Labels updated by the refresh timer.
 typedef struct {
     lv_obj_t *roll;
     lv_obj_t *pitch;

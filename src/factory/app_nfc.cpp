@@ -5,23 +5,60 @@
  * @copyright Copyright (c) 2024  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2024-10-11
  *
+ * @brief     NFC tag reader built on ST's RFAL stack.
+ *
+ * Drives the ST25R3916 NFC front end to discover tags, read their NDEF message,
+ * and decode each record into the structs declared in app_nfc.h. Decoded records
+ * are handed up through the `ndef_event_cb` callback, which hal_interface.cpp
+ * registers and turns into UI actions.
+ *
+ * Layering, from the bottom up:
+ *   1. RFAL (RF Abstraction Layer) -- ST's driver for the ST25R3916, handling the
+ *      13.56 MHz analogue front end and the ISO14443 anticollision protocol.
+ *   2. NdefClass -- the NDEF poller: detects an NDEF-formatted tag and reads its
+ *      raw message bytes.
+ *   3. This file -- decodes the message into records, dispatches each by type,
+ *      and (for the record types it recognises) raises the event callback.
+ *
+ * Read-only: the app never writes to a tag.
+ *
+ * Everything runs on the caller's task, driven by loopNFCReader() being called
+ * every pass of the Arduino loop(). There is no interrupt or worker task, so the
+ * state machine must never block.
+ *
+ * Much of the second half of this file is diagnostic printing -- the
+ * ndef*Dump()/ndefBuffer*Print() helpers write a decoded view of each record to
+ * the serial console, which is how tag problems are triaged in production.
+ *
+ * @see ST25R3916:  https://www.st.com/en/nfc/st25r3916.html
+ * @see NDEF/RTD specifications: https://nfc-forum.org/build/specifications
  */
 
 #include "app_nfc.h"
 
 #if defined(ARDUINO) && defined(USING_ST25R3916)
 
+/**
+ * Reader state.
+ *
+ * ST_WAIT_RELEASED is what stops a tag left resting on the antenna from being
+ * read over and over: after a successful read the reader stops discovering and
+ * instead watches for the tag to leave the field, only then returning to
+ * ST_POLLING. Without it, one tag would fire the event callback continuously.
+ */
 enum NFCReaderState {
-    ST_POLLING,
-    ST_WAIT_RELEASED,
+    ST_POLLING,         ///< discovering: looking for a tag entering the field
+    ST_WAIT_RELEASED,   ///< tag already read; waiting for it to be taken away
 };
 
+/// Scratch buffer for one raw NDEF message. 1 KB caps the tag size this app can
+/// read -- larger messages are truncated by ndefPollerReadRawMessage().
 static uint8_t          rawBuffer[1024] = {0};
-static NdefClass        ndef(&NFCReader);
+static NdefClass        ndef(&NFCReader);     ///< NDEF poller layered over the RFAL driver
 static NFCReaderState   state = ST_POLLING;
-static notify_callback_t ndef_notify_cb = NULL;
-static ndef_event_callback_t ndef_event_cb = NULL;
-static bool _nfc_running = false;
+static notify_callback_t ndef_notify_cb = NULL;         ///< "tag detected", fires before decoding
+static ndef_event_callback_t ndef_event_cb = NULL;      ///< "record decoded", one call per record
+static bool _nfc_running = false;                       ///< gates loopNFCReader() when the app is closed
 
 static ReturnCode ndefRecordDumpType(const ndefRecord *record);
 static ReturnCode ndefRtdDeviceInfoDump(const ndefType *devInfo, ndefTypeRtdDeviceInfo *devInfoData);
@@ -35,6 +72,26 @@ static ReturnCode ndefMediaVCardTranslate(const ndefConstBuffer *bufText, ndefCo
 static ReturnCode ndefMediaVCardDump(const ndefType *vCard);
 static ReturnCode ndefRecordDump(const ndefRecord *record, bool verbose);
 
+/**
+ * Read and decode the NDEF message from the tag currently in the field.
+ *
+ * Runs the full read pipeline, bailing out quietly at any step that fails --
+ * which is the common case, not an error: plenty of tags are not NDEF-formatted
+ * at all, and a card moved away mid-read simply stops responding.
+ *
+ * Steps:
+ *   1. Print the tag's UID (nfcid) for diagnostics.
+ *   2. ndefPollerContextInitialization() -- work out the tag technology and set
+ *      up the right access commands for it.
+ *   3. ndefPollerNdefDetect() -- confirm an NDEF area exists and find its size.
+ *   4. ndefPollerReadRawMessage() -- read the bytes into `rawBuffer`.
+ *   5. ndefMessageDecode() -- parse the byte stream into a record list.
+ *   6. Walk the records, passing each to ndefRecordDump(), which dispatches by
+ *      type and raises `ndef_event_cb`.
+ *
+ * One NDEF message may hold several records, hence the loop -- a Wi-Fi handoff
+ * tag, for instance, commonly carries both a credential record and a text one.
+ */
 static void ndefClassHandler()
 {
     rfalNfcDevice *nfcDev;
@@ -94,6 +151,21 @@ static void ndefClassHandler()
     }
 }
 
+/**
+ * RFAL state-change notification, registered with the discovery configuration.
+ *
+ * Most states are only logged. The one that matters is RFAL_NFC_STATE_ACTIVATED,
+ * meaning a tag has been selected and is ready for data exchange -- that is where
+ * the tag is actually read:
+ *   1. fire `ndef_notify_cb` for immediate user feedback (a buzz),
+ *   2. read and decode the message,
+ *   3. deactivate the tag and put it to sleep so it stops answering,
+ *   4. move to ST_WAIT_RELEASED so it is not re-read while it sits on the antenna.
+ *
+ * The POLLING build blocks here instead, spinning until the tag is physically
+ * removed. The default (non-POLLING) path hands that job to the state machine in
+ * loopNFCReader(), which keeps this callback non-blocking.
+ */
 static void demoNotif(rfalNfcState st )
 {
     if ( st == RFAL_NFC_STATE_WAKEUP_MODE ) {
@@ -138,8 +210,25 @@ static void demoNotif(rfalNfcState st )
 
 
 
+/// Rate limiter for the "tag can be removed" log line, so it prints at most once
+/// a second while a tag rests on the antenna.
 uint32_t interval = 0;
 
+/**
+ * Drive one iteration of the reader. Must be called continuously -- it is
+ * non-blocking and returns immediately when there is nothing to do. Called from
+ * loop() in factory.ino.
+ *
+ * ST_POLLING     -- hand time to rfalNfcWorker(), RFAL's own state machine, which
+ *                   performs discovery and raises demoNotif() on activation.
+ * ST_WAIT_RELEASED -- poll the previously read tag with a WUPA (wake-up) command
+ *                   to see whether it is still there. A timeout, or a select
+ *                   failure, means it has gone, so discovery restarts. The
+ *                   rfalNfcaPollerSleep() call each pass re-silences a tag that
+ *                   answered, so it does not get re-selected.
+ *
+ * The `_nfc_running` guard means this costs nothing when the NFC app is closed.
+ */
 void loopNFCReader()
 {
     if (!_nfc_running)return;
@@ -290,6 +379,27 @@ static ReturnCode ndefBufferDump(const char *string, const ndefConstBuffer *bufP
     return ST_ERR_NONE;
 }
 
+/**
+ * Decode one record into its typed form and raise the event callback.
+ *
+ * This is the dispatch point of the whole file: ndefRecordToType() identifies
+ * what the record holds, the matching ndef*Dump() helper parses it into one of
+ * the static structs below, and `ndef_event_cb` is called with the type id plus a
+ * pointer to that struct. The consumer (ndef_event_callback in
+ * hal_interface.cpp) switches on the same id to know which struct it received.
+ *
+ * The parsed structs are `static` because the callback's pointer must stay valid
+ * for the call, and in some cases beyond it. The consequence is that this
+ * function is not reentrant and each new record of a given type overwrites the
+ * previous one -- fine given it is only ever called from loopNFCReader() on one
+ * task, and each record is consumed before the next is parsed.
+ *
+ * Unrecognised types still reach the callback, but with `user_data` NULL, so
+ * consumers must tolerate a null payload.
+ *
+ * @return Always ST_ERR_NOT_IMPLEMENTED, even on success. ndefRecordDump()
+ *         ignores this value; only the errors from earlier stages propagate.
+ */
 static ReturnCode ndefRecordDumpType(const ndefRecord *record)
 {
     static ndefTypeRtdDeviceInfo   devInfoData;
@@ -342,6 +452,20 @@ static ReturnCode ndefRecordDumpType(const ndefRecord *record)
     return ST_ERR_NOT_IMPLEMENTED;
 }
 
+/**
+ * Print a record and decode it. Called once per record by ndefClassHandler().
+ *
+ * `index` numbers the records within one message for the log; it is reset when
+ * the MB (Message Begin) header flag marks the first record, and incremented
+ * otherwise.
+ *
+ * The bulk of this function -- the raw header/type/payload hex dump -- is
+ * compiled out unless DEBUG_NDEF is defined, so a production build only prints
+ * the record number and whatever the type-specific handler logs. Define
+ * DEBUG_NDEF to inspect tags that fail to decode.
+ *
+ * @param verbose  request the extended dump; only has an effect under DEBUG_NDEF
+ */
 static ReturnCode ndefRecordDump(const ndefRecord *record, bool verbose)
 {
     static uint32_t index;
@@ -474,6 +598,16 @@ static ReturnCode ndefRtdDeviceInfoDump(const ndefType *devInfo, ndefTypeRtdDevi
     return ST_ERR_NONE;
 }
 
+/**
+ * Extract an NDEF Text record ("RTD T") into `rtdText`.
+ *
+ * The buffers returned point *into* the record's payload inside `rawBuffer`, not
+ * to copies -- so the contents are only valid until the next tag is read. That is
+ * why ndefRecordDumpType() keeps its structs static and the consumer copies out
+ * what it needs during the callback.
+ *
+ * Note the buffers are length-delimited and not guaranteed NUL-terminated.
+ */
 static ReturnCode ndefRtdTextDump(const ndefType *text, ndefRtdText *rtdText)
 {
 
@@ -496,6 +630,16 @@ static ReturnCode ndefRtdTextDump(const ndefType *text, ndefRtdText *rtdText)
     return ST_ERR_NONE;
 }
 
+/**
+ * Extract an NDEF URI record ("RTD U") into `rtdUri`.
+ *
+ * NDEF stores URIs compressed: a single leading byte encodes a well-known
+ * protocol prefix ("http://www.", "https://", "tel:", ...) and only the
+ * remainder is stored literally. ndefGetRtdUri() expands that byte back into
+ * `bufProtocol`, so the full URI is the two buffers concatenated.
+ *
+ * Same lifetime caveat as ndefRtdTextDump(): the buffers alias the raw payload.
+ */
 static ReturnCode ndefRtdUriDump(const ndefType *uri, ndefRtdUri *rtdUri)
 {
     if (uri == NULL || rtdUri == NULL) {
@@ -512,6 +656,11 @@ static ReturnCode ndefRtdUriDump(const ndefType *uri, ndefRtdUri *rtdUri)
     return ST_ERR_NONE;
 }
 
+/**
+ * Extract an Android Application Record ("RTD AAR") -- an Android package name
+ * such as "com.example.app". Tapping such a tag makes Android launch or offer to
+ * install that app. This firmware only logs it; nothing acts on it.
+ */
 static ReturnCode ndefRtdAarDump(const ndefType *aar, ndefConstBuffer *bufAarString)
 {
     if (aar == NULL || bufAarString == NULL) {
@@ -637,6 +786,17 @@ static ReturnCode ndefMediaVCardDump(const ndefType *vCard)
     return ST_ERR_NONE;
 }
 
+/**
+ * Extract a Wi-Fi handoff record (Wi-Fi Simple Configuration credentials) into
+ * `wifiConfig` -- SSID, network key, and the authentication/encryption types.
+ *
+ * This is the one record type the firmware acts on rather than merely displaying:
+ * ndef_event_callback() in hal_interface.cpp forwards it to ui_nfc_pop_up(),
+ * which offers to join the network.
+ *
+ * @note The DEBUG_NDEF block prints the network key in clear text to the serial
+ *       console, so leave DEBUG_NDEF undefined outside of development.
+ */
 static ReturnCode ndefMediaWifiDump(const ndefType *wifi, ndefTypeWifi *wifiConfig)
 {
     if (wifi == NULL || wifiConfig == NULL) {
@@ -662,6 +822,27 @@ static ReturnCode ndefMediaWifiDump(const ndefType *wifi, ndefTypeWifi *wifiConf
     return ST_ERR_NONE;
 }
 
+/**
+ * Initialise the front end and start tag discovery.
+ *
+ * Discovery configuration:
+ *   - devLimit 1        -- stop at the first tag found; no multi-tag anticollision.
+ *   - techs2Find TECH_A -- poll only for NFC-A (ISO14443 Type A). This covers
+ *                          MIFARE and NTAG, by far the most common NDEF tags, and
+ *                          restricting the technology list keeps each poll cycle
+ *                          short and cheap. Type B and Felica tags are ignored.
+ *   - wakeupEnabled false -- do not use the low-power wake-up mode; the reader
+ *                          polls actively, which is more responsive but draws more
+ *                          current. Acceptable because discovery only runs while
+ *                          the NFC app is open.
+ *
+ * The trailing rfalNfcDeactivate() puts the field into a clean idle state so the
+ * first loopNFCReader() call starts from a known point.
+ *
+ * @return false if the ST25R3916 does not respond -- typically an unpopulated or
+ *         unpowered part. Call hw_start_nfc_discovery() rather than this directly,
+ *         since the NFC rail must be switched on first.
+ */
 bool beginNFC(notify_callback_t notify_cb, ndef_event_callback_t event_cb)
 {
     bool res = false;
@@ -688,6 +869,14 @@ bool beginNFC(notify_callback_t notify_cb, ndef_event_callback_t event_cb)
     return true;
 }
 
+/**
+ * Stop discovery and gate loopNFCReader() off.
+ *
+ * Note the callbacks are left registered and the RFAL stack is not torn down --
+ * beginNFC() reinitialises it anyway, so the app can be reopened cleanly. The
+ * caller (hw_stop_nfc_discovery()) additionally cuts power to the front end,
+ * which is what actually stops the RF field draining the battery.
+ */
 void deinitNFC()
 {
     NFCReader.rfalNfcDeactivate(false);

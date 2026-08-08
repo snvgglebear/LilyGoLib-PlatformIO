@@ -5,6 +5,28 @@
  * @copyright Copyright (c) 2025  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2025-04-24
  *
+ * @brief     RadioLib driver for the Semtech SX1280 2.4 GHz LoRa transceiver.
+ *
+ * One of five interchangeable radio back ends; compiled only when the
+ * `ARDUINO_LILYGO_LORA_SX1280` build flag is the uncommented
+ * `ARDUINO_LILYGO_LORA_*` option in platformio.ini. It implements the same
+ * hw_radio_ / radio_get_ contract as hw_sx1262.cpp -- see that file for the
+ * commentary on the shared IRQ/event-group pattern, which is identical here.
+ *
+ * What differs is the band. The SX1280 operates at 2.4 GHz rather than sub-GHz,
+ * which changes every tuning option:
+ *   - frequencies are 2400-2500 MHz (a worldwide ISM band, shared with WiFi and
+ *     Bluetooth, so expect more interference than at 868/915 MHz),
+ *   - bandwidths are much wider (203-1625 kHz), giving higher data rates and
+ *     shorter air-time,
+ *   - output power tops out at +13 dBm, well below the SX1262's +22 dBm.
+ *
+ * Combined with the higher path loss at 2.4 GHz, range is considerably shorter
+ * than the sub-GHz parts. The SX1280 also supports ranging (time-of-flight
+ * distance measurement), which this demo does not use.
+ *
+ * @see SX1280 datasheet: https://www.semtech.com/products/wireless-rf/lora-connect/sx1280
+ * @see RadioLib API:     https://jgromes.github.io/RadioLib/class_s_x1280.html
  */
 #include "hal_interface.h"
 
@@ -12,11 +34,13 @@
 
 #include <LilyGoLib.h>
 
-static EventGroupHandle_t radioEvent = NULL;
-static uint32_t last_send_millis = 0;
+static EventGroupHandle_t radioEvent = NULL;    ///< signals "radio IRQ fired"
+static uint32_t last_send_millis = 0;           ///< used to filter our own transmissions out of RX
 
 #define LORA_ISR_FLAG                  _BV(0)
 
+/// Packet-sent/received interrupt. Sets an event bit and returns; all SPI work
+/// happens later on a task. See hw_sx1262.cpp for the full explanation.
 static void hw_radio_isr()
 {
     BaseType_t xHigherPriorityTaskWoken, xResult;
@@ -269,6 +293,19 @@ bool radio_transmit(const uint8_t *data, size_t length)
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// Settings-dropdown backing data, specific to the SX1280's 2.4 GHz band.
+//
+// Each list is paired with a newline-separated string version below; the two
+// must stay in the same order and length, since the UI indexes one by the
+// selection made in the other.
+//
+// The bandwidths are the four the chip supports, all far wider than the sub-GHz
+// parts' options. The frequency list steps across 2400-2500 MHz on roughly
+// 10 MHz centres -- the same spectrum WiFi and Bluetooth occupy, so choosing a
+// channel away from local WiFi traffic materially improves reliability.
+// Power is capped at +13 dBm by the chip.
+// ---------------------------------------------------------------------------
 static const float bandwidth_list[] = {203.125, 406.25, 812.5, 1625.0};
 static const float power_level_list[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
 static const float freq_list[] = {2400.0,

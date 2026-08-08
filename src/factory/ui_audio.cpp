@@ -6,15 +6,28 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief Music player -- browse and play MP3 files from storage.
+ *
+ * Lists the audio files found on the SD card or in the internal FFat partition
+ * (whichever the board has) and plays the selected one. Playback itself happens
+ * on the dedicated player task in hal_interface.cpp; this file only posts
+ * requests and reflects state, so decoding never blocks the UI.
+ *
+ * The volume slider is only built on boards with a real audio codec -- boards
+ * driving a bare amplifier over I2S have no gain control to offer.
+ *
+ * @see hal_interface.cpp: playerTask(), playMP3(), hw_set_sd_music_play().
+ */
 #include "ui_define.h"
 
 #ifdef USING_AUDIO_CODEC
 #define HAS_VOLUME_SLIDER
 #endif
 
-static vector<AudioParams_t> music_list;
-static lv_timer_t *timer = NULL;
-static lv_obj_t *last_play_obj = NULL;
+static vector<AudioParams_t> music_list;    ///< files discovered on the filesystem
+static lv_timer_t *timer = NULL;            ///< polls playback state to update the UI
+static lv_obj_t *last_play_obj = NULL;      ///< row currently playing, so its icon can be reset
 static lv_obj_t *menu = NULL;
 static lv_obj_t *quit_btn = NULL;
 
