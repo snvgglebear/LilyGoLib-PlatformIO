@@ -6,6 +6,22 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief Power app -- sleep, shutdown, and charger controls.
+ *
+ * Offers the two ways to power the device down, which behave differently and are
+ * described to the user by the string hw_get_device_power_tips_string() returns:
+ *   - Sleep: deep sleep, woken by a button press. RAM is lost and boot restarts
+ *     from setup(), but the device comes back quickly.
+ *   - Shutdown: the PMU drops the rails entirely. Waking needs a long press of
+ *     the power button or a USB-C connection.
+ *
+ * Also exposes the charger settings -- enable/disable and charge current -- and,
+ * on boards that support it, OTG mode, in which the device powers an external
+ * USB peripheral from its own battery rather than charging.
+ *
+ * @see hal_interface.cpp: hw_sleep(), hw_shutdown(), hw_set_charger_current_level().
+ */
 #include "ui_define.h"
 
 static lv_obj_t *menu = NULL;

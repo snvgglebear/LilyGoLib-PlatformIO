@@ -5,11 +5,24 @@
  * @copyright Copyright (c) 2025  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2025-01-05
  *
+ * @brief     App-wide notification pop-up and the WiFi connection progress bar.
+ *
+ * Two things live here, both callable from anywhere (including from hardware
+ * callbacks such as the NFC handler in hal_interface.cpp):
+ *   - ui_msg_pop_up(), a single-button "OK" dialog,
+ *   - ui_show_wifi_process_bar(), the modal progress view shown while joining a
+ *     network, which reports success or the specific failure when it finishes.
+ *
+ * Both suppress low-power/screen blanking while they are on screen -- a dialog
+ * the user has not acknowledged should not vanish into a screen timeout.
  */
 #include "ui_define.h"
 
+/// The one live pop-up, or NULL. Only one may exist at a time; a second request
+/// while one is open is dropped rather than queued.
 static lv_obj_t *msgbox = NULL;
 
+/// "Close" handler: tear the dialog down and re-permit low-power mode.
 static void msgbox_event(lv_event_t *e)
 {
     lv_obj_t *obj = (lv_obj_t *)lv_event_get_current_target(e);
@@ -19,6 +32,16 @@ static void msgbox_event(lv_event_t *e)
     set_low_power_mode_flag(true);
 }
 
+/**
+ * Show a modal notification with a single "Close" button.
+ *
+ * The `btns` array is terminated by an empty string, matching create_msgbox()'s
+ * expected format. It is `static` because LVGL keeps a pointer to the captions
+ * rather than copying them.
+ *
+ * Silently returns if a pop-up is already open -- so a burst of events (several
+ * NFC records from one tag, say) produces one dialog, not a stack of them.
+ */
 void ui_msg_pop_up(const char *title_txt, const char *msg_txt)
 {
 
@@ -37,9 +60,25 @@ void ui_msg_pop_up(const char *title_txt, const char *msg_txt)
 
 
 
-static lv_timer_t *processBarTimer = NULL;
-static uint32_t prevTick = 0;
+static lv_timer_t *processBarTimer = NULL;  ///< 500 ms poll driving the progress bar
+static uint32_t prevTick = 0;               ///< absolute tick at which the attempt times out
 
+/**
+ * Poll the WiFi association attempt, 500 ms per tick.
+ *
+ * Finishes on either outcome -- a usable connection, or the deadline in
+ * `prevTick` passing. Both paths tear down the bar, re-enable input, and raise a
+ * pop-up; the failure path inspects hw_get_wifi_status() so the message names
+ * the actual problem (wrong password, SSID not found, radio off) instead of a
+ * generic error.
+ *
+ * "Connected" deliberately requires more than hw_get_wifi_connected(): the IP
+ * must also be a real address, because association completes before DHCP does
+ * and reporting success at that point would show the user an IP of 0.0.0.0.
+ *
+ * The bar's own progress is cosmetic -- it advances a fixed 5% per tick and is
+ * not tied to the connection's actual state.
+ */
 static void _ui_process_bar_cb(lv_timer_t*t)
 {
     lv_obj_t *bar = (lv_obj_t *)lv_timer_get_user_data(t);
@@ -99,13 +138,22 @@ static void _ui_process_bar_cb(lv_timer_t*t)
 }
 
 
+/**
+ * Show the modal "WiFi connecting..." progress bar and start polling.
+ *
+ * Input devices are disabled for the duration so the user cannot navigate away
+ * mid-attempt; _ui_process_bar_cb() re-enables them on either outcome.
+ *
+ * The attempt is given 10 seconds. lv_timer_ready() runs the first poll
+ * immediately rather than waiting out the initial 500 ms interval.
+ */
 void ui_show_wifi_process_bar()
 {
     if (processBarTimer) {
         printf("Timer is running");
         return;
     }
-    prevTick = lv_tick_get() + 10000;
+    prevTick = lv_tick_get() + 10000;   // deadline: 10 s from now
     disable_input_devices();
     lv_obj_t *bar = ui_create_process_bar(lv_scr_act(), "WiFi connecting...");
     lv_bar_set_value(bar, 0, LV_ANIM_OFF);

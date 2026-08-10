@@ -5,6 +5,28 @@
  * @copyright Copyright (c) 2025  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2025-04-24
  *
+ * @brief     RadioLib driver for the Semtech LR1121 multi-band LoRa transceiver.
+ *
+ * One of five interchangeable radio back ends; compiled only when
+ * `ARDUINO_LILYGO_LORA_LR1121` is the uncommented `ARDUINO_LILYGO_LORA_*` build
+ * flag in platformio.ini. The IRQ/event-group plumbing is identical to
+ * hw_sx1262.cpp, which carries the detailed commentary on that pattern.
+ *
+ * What makes the LR1121 different is that it is *dual-band*: a single part
+ * covers both the sub-GHz ISM bands (150-960 MHz) and the 2.4 GHz band, in
+ * effect combining an SX1262 and an SX1280. It also has a GNSS/WiFi scanning
+ * feature this demo does not use.
+ *
+ * That dual-band nature is why this file, alone among the back ends, keeps a
+ * `_high_freq` flag and a *second* copy of each option list: the legal
+ * bandwidths and the achievable output power depend on which band the currently
+ * selected frequency falls in. The `bool high_freq` parameter threaded through
+ * the radio_get_*_list() functions selects between the two sets --
+ * up to +22 dBm and narrow bandwidths below 1 GHz, versus +13 dBm and wider
+ * bandwidths at 2.4 GHz.
+ *
+ * @see LR1121 datasheet: https://www.semtech.com/products/wireless-rf/lora-connect/lr1121
+ * @see RadioLib API:     https://jgromes.github.io/RadioLib/class_l_r1121.html
  */
 
 #include "hal_interface.h"
@@ -12,16 +34,20 @@
 #ifdef ARDUINO_LILYGO_LORA_LR1121
 
 
+/// True when the selected frequency is in the 2.4 GHz band. Latched whenever a
+/// frequency is applied, and consulted by the option-list accessors so the UI
+/// only ever offers settings valid for the band currently in use.
 static bool _high_freq = false;
 
 #ifdef ARDUINO
 #include <LilyGoLib.h>
 
-static EventGroupHandle_t radioEvent = NULL;
-static uint32_t last_send_millis = 0;
+static EventGroupHandle_t radioEvent = NULL;    ///< signals "radio IRQ fired"
+static uint32_t last_send_millis = 0;           ///< used to filter our own transmissions out of RX
 
 #define LORA_ISR_FLAG                  _BV(0)
 
+/// Packet-sent/received interrupt; sets an event bit only. See hw_sx1262.cpp.
 static void hw_radio_isr()
 {
     BaseType_t xHigherPriorityTaskWoken, xResult;
@@ -326,6 +352,19 @@ bool radio_transmit(const uint8_t *data, size_t length)
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// Settings-dropdown backing data.
+//
+// Unlike the single-band back ends, the LR1121 needs *two* sets of bandwidth and
+// power options -- one per band -- because what the chip can do differs above
+// and below 1 GHz. The `_high_freq` flag chooses between them in the accessors
+// below, so the UI never offers a setting the current band cannot honour.
+//
+// The frequency list is a single array spanning both bands: the first ten
+// entries are sub-GHz ISM channels, the remainder step across 2.4 GHz. Crossing
+// that boundary is what flips `_high_freq` and, in turn, swaps out the other two
+// dropdowns' contents.
+// ---------------------------------------------------------------------------
 #ifdef RADIO_FIXED_FREQUENCY
 static const float freq_list[] = {RADIO_FIXED_FREQUENCY,
                                   2400.0, 2410.0, 2420.0, 2430.0, 2440.0, 2450.0, 2460.0, 2470.0, 2480.0, 2490.0, 2500.0
@@ -336,11 +375,11 @@ static const float freq_list[] = {315.0, 433.0, 434.0, 470.0, 842.0, 850, 868.0,
                                  };
 #endif
 
-static const float bandwidth_list[] = {62.5, 125.0, 250.0, 500.0};
-static const float bandwidth_high_freq_list[] = {62.5, 125.0, 203.125, 250.0, 406.25, 500.0, 812.5};
+static const float bandwidth_list[] = {62.5, 125.0, 250.0, 500.0};                                  ///< sub-GHz
+static const float bandwidth_high_freq_list[] = {62.5, 125.0, 203.125, 250.0, 406.25, 500.0, 812.5};///< 2.4 GHz: wider options available
 
-static const float power_level_list[] = {2, 5, 10, 12, 17, 20, 22};
-static const float power_level_high_freq_list[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
+static const float power_level_list[] = {2, 5, 10, 12, 17, 20, 22};                                 ///< sub-GHz, up to +22 dBm
+static const float power_level_high_freq_list[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};   ///< 2.4 GHz, capped at +13 dBm
 
 uint16_t radio_get_freq_length()
 {

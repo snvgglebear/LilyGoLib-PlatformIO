@@ -5,6 +5,31 @@
  * @copyright Copyright (c) 2025  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2025-01-08
  *
+ * @brief     Hardware abstraction layer -- the single seam between the UI and the board.
+ *
+ * Every `ui_*.cpp` file talks to hardware exclusively through the `hw_*()`
+ * functions declared here; none of them include <LilyGoLib.h> or touch the
+ * global `instance` directly. That indirection is what makes the same UI code
+ * build twice:
+ *
+ *   - Arduino build  -- hal_interface.cpp forwards each call to LilyGoLib.
+ *   - Emulator build -- the same functions are stubbed or simulated on the host.
+ *
+ * The header therefore does two jobs:
+ *   1. Declare the `hw_*()` API and the plain-old-data structs it exchanges
+ *      (`gps_params_t`, `radio_params_t`, `monitor_params_t`, ...). These structs
+ *      use `std::string`/`std::vector` rather than raw buffers so callers do not
+ *      have to manage lifetimes.
+ *   2. Backfill, for the non-Arduino build, the handful of Arduino/ESP-IDF
+ *      symbols the app relies on (`wl_status_t`, `constrain()`, `_BV()`, the
+ *      `HW_*_ONLINE` probe bits, the DEVICE_* limits). See the `#ifndef ARDUINO`
+ *      block below.
+ *
+ * The tail of the file holds the per-board feature matrix -- the `USING_*`
+ * capability macros derived from the board identity macro. See there for which
+ * board gets NFC, a keyboard, a trackball, and so on.
+ *
+ * @see LilyGoLib API: https://github.com/Xinyuan-LilyGO/LilyGoLib
  */
 
 #pragma once
@@ -16,6 +41,10 @@
 #include "event_define.h"
 
 using namespace std;
+
+/// HID consumer-control keys the device can emit as a BLE media remote.
+/// Consumed by hw_set_ble_key(); used by the camera-remote and music apps.
+/// @see USB HID Consumer Page: https://usb.org/document-library/hid-usage-tables-16
 typedef enum {
     MEDIA_VOLUME_UP,
     MEDIA_VOLUME_DOWN,
@@ -24,6 +53,9 @@ typedef enum {
     MEDIA_PREVIOUS
 } media_key_value_t;
 
+/// Which physical keyboard the board carries. Selects the keymap/scan handling
+/// in the keyboard app; NONE means the board is touch-only. The active value is
+/// DEVICE_KEYBOARD_TYPE, set in the per-board block at the bottom of this file.
 typedef enum {
     KEYBOARD_TYPE_NONE,
     KEYBOARD_TYPE_1,
@@ -32,16 +64,29 @@ typedef enum {
 
 
 /* Radio frequency constants */
+// Uncomment these to pin the demo to a single frequency and label it in the UI,
+// instead of letting the radio app tune across the band.
 // #define RADIO_FIXED_FREQUENCY  920.0
 // #define RADIO_FIXED_FREQUENCY_STRING "920MHZ"
+
+/// Frequency (MHz) the LoRa radio comes up on. 916 MHz sits in the 902-928 MHz
+/// ISM band; change it to a legal frequency for your region before transmitting.
 #define RADIO_DEFAULT_FREQUENCY  916.0
 
-// Check if not compiling for Arduino environment
-// If not, define the wl_status_t enumeration
+// ---------------------------------------------------------------------------
+// Non-Arduino (emulator) compatibility shim.
+//
+// The UI code freely uses a few Arduino/ESP-IDF conveniences. Rather than
+// #ifdef every use site, the missing pieces are recreated here for the host
+// build so ui_*.cpp compiles unchanged against either target.
+// ---------------------------------------------------------------------------
 #ifndef ARDUINO
 
+/// Arduino's clamp macro. Beware: `amt` is evaluated up to three times, so do
+/// not pass an expression with side effects.
 #define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
 
+/// Arduino's "bit value" helper: _BV(3) == 0b1000. Used for the HW_*_ONLINE bits.
 #ifndef _BV
 #define _BV(x)                      (1UL<<x)
 #endif
@@ -64,17 +109,24 @@ typedef enum {
     WL_DISCONNECTED = 6
 } wl_status_t;
 
-#define DEVICE_MAX_BRIGHTNESS_LEVEL 255
+// Emulator stand-ins for limits that LilyGoLib supplies per board on hardware.
+// They bound the settings sliders in ui_sys.cpp / ui_power.cpp.
+#define DEVICE_MAX_BRIGHTNESS_LEVEL 255     ///< backlight range is 0-255 on the watches (0-16 on the Pager)
 #define DEVICE_MIN_BRIGHTNESS_LEVEL 0
-#define DEVICE_MAX_CHARGE_CURRENT   1000
-#define DEVICE_MIN_CHARGE_CURRENT   100
-#define DEVICE_CHARGE_LEVEL_NUMS    12
-#define DEVICE_CHARGE_STEPS         1
-#define USING_RADIO_NAME            "SX12XX"
+#define DEVICE_MAX_CHARGE_CURRENT   1000    ///< battery charge current ceiling, mA
+#define DEVICE_MIN_CHARGE_CURRENT   100     ///< battery charge current floor, mA
+#define DEVICE_CHARGE_LEVEL_NUMS    12      ///< number of selectable charge-current steps in the UI
+#define DEVICE_CHARGE_STEPS         1       ///< increment between adjacent steps
+#define USING_RADIO_NAME            "SX12XX" ///< label shown where hardware reports the real part number
 
 
 // Hardware online status bit definitions
-// Each bit represents the online status of a specific hardware component
+// Each bit represents the online status of a specific hardware component.
+// instance.begin() probes each bus; the resulting bitmask is returned by
+// hw_get_device_online() (and instance.getDeviceProbe() on hardware). Code that
+// touches an optional peripheral must test its bit first -- the same firmware
+// image runs on boards with different parts populated, so absence is normal and
+// must not be treated as an error.
 #define HW_RADIO_ONLINE             (_BV(0))
 #define HW_TOUCH_ONLINE             (_BV(1))
 #define HW_DRV_ONLINE               (_BV(2))
@@ -98,17 +150,26 @@ typedef enum {
 #define HW_LED_INDIC_ONLINE         (_BV(20))
 
 // Arduino-ESP32 core version macros; used to gate code that only
-// compiles/behaves correctly against specific arduino-esp32 releases
+// compiles/behaves correctly against specific arduino-esp32 releases.
+// On the host there is no core, so the version is pinned to 0.0.0 -- every
+// version test therefore takes the "old core" branch.
 #define ESP_ARDUINO_VERSION_VAL(major, minor, patch) (((major) << 16) | ((minor) << 8) | (patch))
 #define ESP_ARDUINO_VERSION ESP_ARDUINO_VERSION_VAL(0, 0, 0)
 
 #else
-// If compiling for Arduino, include the WiFi library
+// If compiling for Arduino, include the WiFi library.
+// It defines the real wl_status_t and the DEVICE_*/HW_*_ONLINE values above are
+// instead supplied by LilyGoLib for the specific board being built.
 #include <WiFi.h>
 #endif
 
 
-// Define the GMT offset in seconds (for 8 hours ahead)
+// Timezone applied to NTP results, in seconds east of UTC.
+// Default is UTC+8 (China Standard Time, where the boards are made).
+// Override it for your own region by editing this line -- e.g. (-5*3600) for US
+// Eastern Standard Time. Note it is defined unconditionally (no #ifndef guard),
+// so a -DGMT_OFFSET_SECOND build flag would collide rather than override.
+// Consumed by factory.ino's configTime() call. No DST rules are applied.
 #define GMT_OFFSET_SECOND       (8*3600)
 
 /**
@@ -119,15 +180,16 @@ typedef enum {
  * number of satellites, and PPS status.
  */
 typedef struct  {
-    string model;
-    double lat;
-    double lng;
-    struct tm datetime;
-    double speed;
-    uint32_t rx_size;
-    uint16_t satellite;
-    bool pps;
-    bool enable_debug;
+    string model;           ///< GNSS module name reported by the receiver, e.g. "UBX-M10"
+    double lat;             ///< latitude in decimal degrees, positive north
+    double lng;             ///< longitude in decimal degrees, positive east
+    struct tm datetime;     ///< UTC date/time from the GNSS fix (independent of the RTC)
+    double speed;           ///< ground speed
+    uint32_t rx_size;       ///< bytes of NMEA received so far; non-zero proves the UART is alive
+                            ///< even before a fix is acquired
+    uint16_t satellite;     ///< satellites used in the current solution
+    bool pps;               ///< pulse-per-second line is toggling (see hw_gps_attach_pps())
+    bool enable_debug;      ///< echo raw NMEA sentences to the serial console
 } gps_params_t;
 
 /**
@@ -136,10 +198,12 @@ typedef struct  {
  * This enumeration defines the possible operating modes of the radio.
  */
 enum RadioMode {
-    RADIO_DISABLE,
-    RADIO_TX,
-    RADIO_RX,
-    RADIO_CW,
+    RADIO_DISABLE,  ///< radio idle / put to sleep
+    RADIO_TX,       ///< transmitting packets
+    RADIO_RX,       ///< listening for packets
+    RADIO_CW,       ///< unmodulated carrier wave -- a test/regulatory mode that keys the
+                    ///< PA continuously; useful for measuring output power, but it occupies
+                    ///< the channel the whole time it is enabled
 };
 
 /**
@@ -149,16 +213,22 @@ enum RadioMode {
  * such as running status, frequency, bandwidth, power, spreading factor,
  * coding rate, mode, sync word, and interval.
  */
+// LoRa air-time is governed by the interaction of bandwidth, spreading factor and
+// coding rate: higher SF and narrower bandwidth increase range and time-on-air;
+// a higher coding-rate denominator adds forward error correction at the cost of
+// throughput. Two radios only hear each other if freq/bandwidth/sf/cr/syncWord
+// all match.
+// @see RadioLib LoRa API: https://jgromes.github.io/RadioLib/
 typedef struct {
-    bool isRunning;
-    float freq;
-    float bandwidth;
-    uint16_t cr;
-    uint8_t power;
-    uint8_t sf;
-    uint8_t mode;
-    uint8_t syncWord;
-    uint32_t interval;
+    bool isRunning;     ///< radio is currently active (transmitting or listening)
+    float freq;         ///< carrier frequency in MHz -- must be legal for your region
+    float bandwidth;    ///< channel bandwidth in kHz (typically 125 / 250 / 500)
+    uint16_t cr;        ///< coding rate denominator: 5..8 meaning 4/5 .. 4/8
+    uint8_t power;      ///< PA output power in dBm
+    uint8_t sf;         ///< spreading factor, 6..12; each step up roughly doubles air-time
+    uint8_t mode;       ///< current RadioMode value
+    uint8_t syncWord;   ///< network id byte; acts as a soft filter between co-located networks
+    uint32_t interval;  ///< delay between automatic transmissions, ms
 } radio_params_t;
 
 /**
@@ -168,11 +238,11 @@ typedef struct {
  * including the BSSID, authentication mode, RSSI, channel, and SSID.
  */
 typedef struct {
-    uint8_t bssid[6];                     /**< MAC address of AP */
-    uint8_t authmode;
-    int8_t  rssi;
-    int32_t channel;
-    string ssid;
+    uint8_t bssid[6];   /**< MAC address of AP */
+    uint8_t authmode;   ///< wifi_auth_mode_t: OPEN / WPA2_PSK / ... -- drives the padlock icon
+    int8_t  rssi;       ///< signal strength in dBm; closer to 0 is stronger (-30 excellent, -90 unusable)
+    int32_t channel;    ///< 2.4 GHz channel number (1-13/14 by region)
+    string ssid;        ///< network name; empty for a hidden network
 } wifi_scan_params_t;
 
 /**
@@ -190,8 +260,8 @@ typedef struct {
  * @note   This enumeration is used to specify the source of audio data.
  */
 typedef enum {
-    AUDIO_SOURCE_FATFS,
-    AUDIO_SOURCE_SDCARD,
+    AUDIO_SOURCE_FATFS,     ///< FFat partition in internal flash (see partitions.csv)
+    AUDIO_SOURCE_SDCARD,    ///< removable microSD card, if one is mounted
 } audio_source_type_t;
 
 /**
@@ -203,9 +273,13 @@ typedef struct {
     string file_name;
 } AudioParams_t;
 
+/// Which power-measurement chip filled in monitor_params_t. The PMU reports
+/// voltages and a coarse percentage; the dedicated fuel gauge additionally
+/// reports capacity, current and time-to-empty/full, so the monitor UI shows
+/// more rows when this is MONITOR_PPM.
 typedef enum {
-    MONITOR_PMU,
-    MONITOR_PPM,
+    MONITOR_PMU,    ///< AXP-series power management unit only
+    MONITOR_PPM,    ///< battery fuel gauge (coulomb counter) present
 } monitor_params_type_t;
 
 /**
@@ -243,13 +317,15 @@ typedef struct {
  * This structure stores user-defined settings, such as display brightness level,
  * keyboard backlight level, display timeout in seconds, charger current, and charger enable status.
  */
+// Persisted across reboots (and across deep sleep, via RTC_DATA_ATTR storage);
+// read with hw_get_user_setting() and written with hw_set_user_setting().
 typedef struct {
-    uint8_t brightness_level;
-    uint8_t keyboard_bl_level;
-    uint8_t led_indicator_level;
-    uint8_t disp_timeout_second;
-    uint16_t charger_current;
-    uint8_t charger_enable;
+    uint8_t brightness_level;       ///< display backlight, 0..hw_get_disp_max_brightness()
+    uint8_t keyboard_bl_level;      ///< keyboard backlight (T-LoRa-Pager only)
+    uint8_t led_indicator_level;    ///< indicator LED brightness, where fitted
+    uint8_t disp_timeout_second;    ///< idle seconds before the screen blanks; 0 disables the timeout
+    uint16_t charger_current;       ///< charge current in mA, clamped to the DEVICE_*_CHARGE_CURRENT range
+    uint8_t charger_enable;         ///< non-zero to allow charging at all
 } user_setting_params_t;
 
 /**
@@ -270,9 +346,9 @@ typedef struct {
  * such as the data buffer, data length, and transmission state.
  */
 typedef struct {
-    uint8_t *data;
-    size_t  length;
-    int state;
+    uint8_t *data;      ///< payload to send; caller owns the buffer and must keep it alive
+    size_t  length;     ///< payload length in bytes (LoRa caps a packet at 255)
+    int state;          ///< RadioLib result code, RADIOLIB_ERR_NONE (0) on success
 } radio_tx_params_t;
 
 /**
@@ -282,11 +358,12 @@ typedef struct {
  * such as the received data buffer, data length, RSSI, SNR, and reception state.
  */
 typedef struct {
-    uint8_t *data;
-    size_t  length;
-    int16_t rssi;
-    int16_t snr;
-    int state;
+    uint8_t *data;      ///< buffer the received payload is copied into
+    size_t  length;     ///< bytes actually received
+    int16_t rssi;       ///< received signal strength, dBm
+    int16_t snr;        ///< signal-to-noise ratio, dB. LoRa demodulates below the noise floor,
+                        ///< so a negative SNR is normal and still decodable
+    int state;          ///< RadioLib result code; RADIOLIB_ERR_CRC_MISMATCH means a corrupt packet
 } radio_rx_params_t;
 
 /**
@@ -295,13 +372,17 @@ typedef struct {
  * This structure stores information related to the Inertial Measurement Unit (IMU),
  * such as roll, pitch, and heading.
  */
+// Fused orientation, produced on-chip by the BHI260AP sensor hub or derived from
+// the BMA423/QMI8658 accelerometer, depending on the board.
 typedef struct {
-    float roll;
-    float pitch ;
-    float heading;
-    uint8_t orientation;
+    float roll;             ///< rotation about the long axis, degrees
+    float pitch ;           ///< nose up/down, degrees
+    float heading;          ///< compass bearing, 0-360 degrees (needs the magnetometer to be calibrated)
+    uint8_t orientation;    ///< coarse screen orientation (portrait/landscape, normal/inverted)
 } imu_params_t;
 
+/// Direction reported by the T-LoRa-Pager's trackball. Mapped onto LVGL
+/// navigation keys so the ball can move focus between widgets.
 typedef enum {
     HW_TRACKBALL_DIR_NONE,
     HW_TRACKBALL_DIR_UP,
@@ -310,19 +391,23 @@ typedef enum {
     HW_TRACKBALL_DIR_RIGHT
 } hw_trackball_dir;
 
-// FFT Configuration
-#define FFT_SIZE 512
-#define SAMPLE_RATE 16000
-#define FREQ_BANDS 16
+// FFT Configuration -- drives the microphone/music spectrum visualiser.
+#define FFT_SIZE 512        ///< samples per transform. Frequency resolution is
+                            ///< SAMPLE_RATE/FFT_SIZE = 31.25 Hz per bin; must be a power of two
+#define SAMPLE_RATE 16000   ///< microphone sample rate in Hz. By Nyquist, the highest
+                            ///< representable frequency is 8 kHz
+#define FREQ_BANDS 16       ///< the 256 useful bins are grouped down to this many display
+                            ///< bars, so the visualiser is independent of FFT_SIZE
 
 /**
  * @brief Structure to hold FFT data.
  *
  * This structure stores the FFT data for the left and right audio channels.
+ * Produced by the audio task and handed to the UI via the MSG_FFT_ID message.
  */
 typedef struct {
-    float left_bands[FREQ_BANDS];
-    float right_bands[FREQ_BANDS];
+    float left_bands[FREQ_BANDS];   ///< per-band magnitude, left channel
+    float right_bands[FREQ_BANDS];  ///< per-band magnitude, right channel
 } FFTData;
 
 /**
@@ -769,6 +854,16 @@ void hw_set_ble_kb_release();
 bool hw_get_ble_kb_connected();
 
 
+/**
+ * @brief  Send a single HID consumer-control (media) key over BLE.
+ * @note   Requires the BLE HID service to be up (hw_set_ble_kb_enable()) and a
+ *         host to be paired. Press and release are handled internally, so this
+ *         is a complete keystroke rather than a key-down. Used by the camera
+ *         remote (volume-up doubles as the shutter on most phones) and the
+ *         music app's transport controls.
+ * @param  key: which media key to emit.
+ * @retval None
+ */
 void hw_set_ble_key(media_key_value_t key);
 
 /**
@@ -1513,6 +1608,38 @@ void hw_set_audio_effect_3d(bool enable);
 void hw_set_audio_effect_ab_class(bool enable);
 
 
+// ===========================================================================
+// Per-board feature matrix
+// ===========================================================================
+//
+// Exactly one ARDUINO_T_* board-identity macro is defined by the selected
+// PlatformIO environment (see the `build_flags` of each `[env:*]` section in
+// platformio.ini). From it, this block derives the capability macros the rest of
+// the app tests with #if defined(...):
+//
+//   USING_TOUCHPAD        capacitive touchscreen present (watches). Its absence
+//                         means the UI must be fully navigable by encoder/keys.
+//   USING_BLE_KEYBOARD    can act as a BLE HID keyboard / media remote.
+//   USING_BHI260_SENSOR   Bosch BHI260AP smart sensor hub (on-chip fusion).
+//                         https://www.bosch-sensortec.com/products/smart-sensor-systems/bhi260ap/
+//   USING_BMA423_SENSOR   Bosch BMA423 accelerometer (the older T-Watch-S3 part).
+//   USING_ST25R3916       ST NFC front end fitted -- gates app_nfc.cpp entirely.
+//   USING_EXTERN_NRF2401  external nRF24L01 2.4 GHz transceiver on the header.
+//   HAS_USB_RF_SWITCH     a USB/RF antenna switch is wired; see hw_set_usb_rf_switch().
+//   DEVICE_KEYBOARD_TYPE  which physical keymap to use (keyboard_type_t).
+//   FLOAT_BUTTON_*        size in px of the floating back button -- larger on the
+//                         high-resolution Ultra so it stays a comfortable touch target.
+//   MAIN_FONT             default LVGL font, scaled to the panel resolution.
+//   NFC_TIPS_STRING       on-screen instructions; the antenna sits in a different
+//                         place on each board, hence per-board wording.
+//
+// Note the `#ifndef` guards: several of these can also be forced on from
+// platformio.ini build_flags, and the guard keeps that from causing a
+// redefinition error. Adding a new board means adding a branch here *and* an
+// `[env:*]` section plus a `variants/lilygo_*/pins_arduino.h`.
+// ---------------------------------------------------------------------------
+
+// --- T-LoRa-Pager: 480x222 landscape, no touch, physical keyboard + trackball ---
 #if defined(ARDUINO_T_LORA_PAGER)
 #define USING_BLE_KEYBOARD
 #define  FLOAT_BUTTON_WIDTH  40
@@ -1521,6 +1648,8 @@ void hw_set_audio_effect_ab_class(bool enable);
 #define USING_BHI260_SENSOR
 #endif
 
+// The nRF24 app only exists if RadioLib was built with nRF24 support -- that is,
+// if platformio.ini did *not* pass -DRADIOLIB_EXCLUDE_NRF24 to shrink the image.
 #ifndef RADIOLIB_EXCLUDE_NRF24
 #define USING_EXTERN_NRF2401
 #endif
@@ -1535,6 +1664,7 @@ void hw_set_audio_effect_ab_class(bool enable);
 
 #define DEVICE_KEYBOARD_TYPE    KEYBOARD_TYPE_1
 
+// --- T-Watch-Ultra: highest-resolution panel, touch, NFC, RF antenna switch ---
 #elif defined(ARDUINO_T_WATCH_S3_ULTRA)
 
 #define USING_TOUCHPAD
@@ -1556,10 +1686,14 @@ void hw_set_audio_effect_ab_class(bool enable);
 
 #define MAIN_FONT   &lv_font_montserrat_22
 
+// --- T-Watch-S3 / S3-Plus: 240x240 touch, older BMA423 sensor, no NFC ---
 #elif defined(ARDUINO_T_WATCH_S3)
 #define USING_TOUCHPAD
 #define FLOAT_BUTTON_WIDTH  40
 #define FLOAT_BUTTON_HEIGHT 40
+// NB: unlike the branches above, USING_BLE_KEYBOARD is nested inside this guard,
+// so a build that already defines USING_BMA423_SENSOR externally will not get
+// USING_BLE_KEYBOARD defined here.
 #ifndef USING_BMA423_SENSOR
 #define USING_BMA423_SENSOR
 #define USING_BLE_KEYBOARD

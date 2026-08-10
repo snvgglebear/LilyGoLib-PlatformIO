@@ -5,15 +5,50 @@
  * @copyright Copyright (c) 2025  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2025-01-08
  *
+ * @brief     Implementation of the hardware abstraction layer declared in hal_interface.h.
+ *
+ * Structure of this file: almost every `hw_*()` function is a pair of bodies
+ * selected by `#ifdef ARDUINO` --
+ *
+ *     void hw_something() {
+ *     #ifdef ARDUINO
+ *         instance.doTheRealThing();      // forward to LilyGoLib
+ *     #else
+ *         ... plausible fake value ...    // desktop emulator
+ *     #endif
+ *     }
+ *
+ * The emulator branch is not a no-op: it returns believable simulated data
+ * (random-walk battery voltage, a synthetic WiFi scan list, a moving GPS fix) so
+ * the UI can be laid out and exercised on a PC with no board attached.
+ *
+ * Nested inside those are the finer-grained capability guards
+ * (`USING_AUDIO_CODEC`, `USING_BQ_GAUGE`, `USING_ST25R3916`, ...) resolved by the
+ * per-board block at the bottom of hal_interface.h -- this is where "which chip
+ * is actually fitted" turns into concrete calls.
+ *
+ * Beyond the thin wrappers, this file owns three pieces of real logic:
+ *   - the MP3 player task and its FreeRTOS queue/event group (playerTask),
+ *   - the FFT spectrum analyser fed by the microphone (process_channel_fft),
+ *   - the NFC callbacks that translate decoded NDEF records into UI actions.
+ *
+ * @see LilyGoLib API: https://github.com/Xinyuan-LilyGO/LilyGoLib
  */
 #include "hal_interface.h"
 #include <math.h>
 #include <lvgl.h>
 
 
+/// Namespace used for the NVS (non-volatile storage) key/value blob holding
+/// user_setting_params_t. Changing this string orphans existing saved settings.
+/// @see https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/storage/nvs_flash.html
 #define NVS_NAME    "pager"
+
+/// Live copy of the persisted user settings; flushed to NVS by hw_set_user_setting().
 static user_setting_params_t user_setting;
 
+/// Per-board limits, published to the UI through the hw_get_disp_*/hw_get_*charge*
+/// accessors so sliders can size themselves without knowing the board.
 typedef struct _device_const_var {
     uint16_t max_brightness;
     uint16_t min_brightness;
@@ -25,6 +60,8 @@ typedef struct _device_const_var {
 
 #ifdef ARDUINO
 
+// esp-dsp: hardware-accelerated real FFT and the Hann window generator.
+// @see https://docs.espressif.com/projects/esp-dsp/en/latest/esp32/esp-dsp-apis.html
 #include "dsps_fft2r.h"
 #include "dsps_wind_hann.h"
 #include "Esp.h"
@@ -41,24 +78,32 @@ typedef struct _device_const_var {
 #include "app_nfc.h"
 #include <FFat.h>
 
-static Preferences           prefs;
-static TaskHandle_t          recTaskHandle;
-static TaskHandle_t          playerTaskHandler = NULL;
-static QueueHandle_t         playerQueue  = NULL;
-static EventGroupHandle_t    playerEvent = NULL;
-static bool                  pps_trigger = false;
+static Preferences           prefs;              ///< NVS handle for the NVS_NAME namespace
+static TaskHandle_t          recTaskHandle;      ///< microphone recording/FFT task
+static TaskHandle_t          playerTaskHandler = NULL;   ///< MP3 decode + I2S output task
+static QueueHandle_t         playerQueue  = NULL;        ///< play requests (audio_params_t) sent to that task
+static EventGroupHandle_t    playerEvent = NULL;         ///< player state bits, see PLAYER_* below
+static bool                  pps_trigger = false;        ///< set by the GPS PPS interrupt, cleared once read
 
-#define PLAYER_PLAY                 _BV(0)
-#define PLAYER_END                  _BV(1)
-#define PLAYER_RUNNING              _BV(2)
+// Bits in `playerEvent`. An event group is used rather than a plain flag so the
+// UI thread can poll state while the player task sets it, without a lock.
+// @see https://www.freertos.org/Real-time-embedded-RTOS-Event-Groups.html
+#define PLAYER_PLAY                 _BV(0)  ///< a play request is pending/in progress
+#define PLAYER_END                  _BV(1)  ///< asks the decode loop to stop early
+#define PLAYER_RUNNING              _BV(2)  ///< the task is currently decoding
 
 
+/// Where audio files are read from: the removable SD card when the board has a
+/// socket, otherwise the FFat partition in internal flash (see partitions.csv).
+/// Both expose the same Arduino FS API, so the rest of the code is identical.
 #if defined(HAS_SD_CARD_SOCKET)
 #define FILESYSTEM                  SD
 #else
 #define FILESYSTEM                  FFat
 #endif
 
+// BLE HID keyboard/media-remote peripheral. Only linked in on boards flagged
+// USING_BLE_KEYBOARD; backs hw_set_ble_kb_*() and hw_set_ble_key().
 #if defined(USING_BLE_KEYBOARD)
 #include <BleKeyboard.h>
 BleKeyboard bleKeyboard;
@@ -76,6 +121,16 @@ static device_const_var_t dev_conts_var = {
 };
 
 
+/**
+ * Human-readable names for each peripheral, indexed to match the HW_*_ONLINE bit
+ * positions in hal_interface.h. This is what the "device probe" list in the
+ * system-info app (ui_sys.cpp) renders alongside each bit's online/offline state.
+ *
+ * Entries for parts that are not fitted on the board being built are compiled to
+ * an empty string rather than removed, so the array index keeps lining up with
+ * the bit number -- the UI skips empty names. Adding a peripheral therefore means
+ * appending both a HW_*_ONLINE bit and a matching slot here, in the same order.
+ */
 static const char *hw_devices[] = {
     USING_RADIO_NAME,
 
@@ -178,6 +233,11 @@ extern void hw_nrf24_begin();
 extern void hw_radio_begin();
 
 
+/**
+ * Host-side stand-in for Arduino's random(min, max), used by the emulator
+ * branches below to synthesise plausible sensor readings. Returns a value in
+ * [min, max] inclusive, tolerating reversed arguments.
+ */
 #ifndef ARDUINO
 int random(int min, int max)
 {
@@ -194,13 +254,45 @@ int random(int min, int max)
 
 #ifdef ARDUINO
 
+/**
+ * Override of a weak symbol in the Arduino-ESP32 core: enlarges the stack of the
+ * task that runs setup()/loop() from the 8 KB default to 30 KB.
+ *
+ * LVGL rendering, the LoRa stack and the NFC parser all recurse and hold sizeable
+ * locals; the default stack overflows. This is the supported way to change it --
+ * see https://docs.espressif.com/projects/arduino-esp32/en/latest/faq.html
+ */
 size_t getArduinoLoopTaskStackSize(void)
 {
     return 30 * 1024;
 }
 
+// Helix MP3 decoder -- the one vendored third-party library, in lib/libhelix-mp3.
 #include <mp3dec.h>
 
+/**
+ * Decode an in-memory MP3 and stream it to the speaker. Blocking; runs on the
+ * player task, never on the UI thread.
+ *
+ * Frame loop: find the next sync word, decode one frame into `outBuf`, then push
+ * those PCM samples to whichever output the board has. The output device is only
+ * opened after the *first* frame is decoded (`codec_begin`), because sample rate,
+ * bit depth and channel count are properties of the stream and are not known
+ * until a frame header has been parsed.
+ *
+ * Two output paths exist:
+ *   - USING_PCM_AMPLIFIER: raw I2S straight into a class-D amplifier, which must
+ *     be powered up explicitly via powerControl(POWER_SPEAK).
+ *   - USING_AUDIO_CODEC:   an I2C-configured codec chip, guarded by its probe bit
+ *     so a board whose codec failed to answer silently skips playback.
+ *
+ * @param src      pointer to the complete MP3 image (the whole file is buffered
+ *                 in PSRAM by the caller -- this is not a streaming decoder)
+ * @param src_len  length of that buffer in bytes
+ * @return         true if the stream ran to completion or was stopped cleanly,
+ *                 false if the decoder could not be allocated or hit a bad frame
+ * @see            https://github.com/ultraembedded/libhelix-mp3
+ */
 static bool playMP3(uint8_t *src, size_t src_len)
 {
     int16_t outBuf[MAX_NCHAN * MAX_NGRAN * MAX_NSAMP];
@@ -268,6 +360,14 @@ static bool playMP3(uint8_t *src, size_t src_len)
 #endif
         }
 
+        // Pause/stop point, evaluated once per decoded frame.
+        //
+        // Block until either PLAYER_PLAY or PLAYER_END is set (xClearOnExit =
+        // pdFALSE so the bits survive, xWaitForAllBits = pdFALSE so either one
+        // wakes us). Clearing PLAYER_PLAY from hw_set_sd_music_pause() therefore
+        // parks the decoder here mid-stream without tearing anything down, and
+        // setting it again resumes exactly where it left off. PLAYER_END breaks
+        // out for a real stop.
 WAIT:
         EventBits_t eventBits =  xEventGroupWaitBits(playerEvent, PLAYER_PLAY | PLAYER_END
                                  , pdFALSE, pdFALSE, portMAX_DELAY);
@@ -292,6 +392,21 @@ WAIT:
     return true;
 }
 
+/**
+ * Load an audio file from storage and hand it to playMP3().
+ *
+ * The whole file is read into a single PSRAM buffer (ps_malloc) before decoding
+ * starts. That keeps the decoder off the storage bus entirely -- important on
+ * the T-Watch-Ultra and T-LoRa-Pager, where the SD card shares its SPI bus with
+ * the display, so every read has to be bracketed by instance.lockSPI() /
+ * unlockSPI() to avoid corrupting whatever LVGL is flushing at the time. The
+ * `lock` flag tracks whether the lock is held, since every error path has to
+ * release it.
+ *
+ * The trade-off is that the file must fit in free PSRAM; there is no streaming
+ * fallback, and a failed allocation simply aborts playback with a log line.
+ * Only ".mp3" is handled -- the else branch is deliberately empty.
+ */
 static void hw_sd_play(audio_source_type_t source, const char *filename)
 {
     bool isMP3 = String(filename).endsWith(".mp3");
@@ -364,6 +479,19 @@ static void hw_sd_play(audio_source_type_t source, const char *filename)
     free(buf);
 }
 
+/**
+ * Audio player task body. Runs forever, serialising every playback request onto
+ * one task so two sounds can never fight over the I2S peripheral.
+ *
+ * Blocks on `playerQueue` until the UI posts an audio_params_t, then decodes it
+ * inline -- which means a long track blocks subsequent requests until it ends or
+ * is stopped via the PLAYER_END bit.
+ *
+ * APP_EVENT_PLAY_KEY plays `keyboard_audio`, a short MP3 compiled into flash as a
+ * byte array (audio/keyboard_audio.h), so UI click feedback needs no filesystem.
+ *
+ * The two lines after the loop are unreachable: the `while (1)` never exits.
+ */
 static void playerTask(void *args)
 {
     audio_params_t params;
@@ -394,13 +522,51 @@ static void playerTask(void *args)
 
 #ifdef ARDUINO
 
-static int16_t i2s_buffer[FFT_SIZE * 2];
-static float fft_input[FFT_SIZE * 2] __attribute__((aligned(16)));
-static float window[FFT_SIZE] __attribute__((aligned(16)));
-static int16_t left_channel[FFT_SIZE];
-static int16_t right_channel[FFT_SIZE];
-static int read_count = 0;
+// ---------------------------------------------------------------------------
+// Microphone spectrum analyser
+//
+// All buffers are file-static rather than stack locals: FFT_SIZE=512 floats is
+// 2 KB per array, too much for a task stack, and reusing fixed buffers avoids
+// per-frame allocation. The 16-byte alignment is required by esp-dsp, whose
+// routines use the S3's 128-bit SIMD load/store instructions.
+// ---------------------------------------------------------------------------
+static int16_t i2s_buffer[FFT_SIZE * 2];    ///< raw interleaved L,R,L,R... samples from I2S
+static float fft_input[FFT_SIZE * 2] __attribute__((aligned(16)));  ///< complex scratch: re,im,re,im...
+static float window[FFT_SIZE] __attribute__((aligned(16)));         ///< precomputed Hann window
+static int16_t left_channel[FFT_SIZE];      ///< de-interleaved left samples
+static int16_t right_channel[FFT_SIZE];     ///< de-interleaved right samples
+static int read_count = 0;                  ///< frame counter, used only to rate-limit debug output
 
+/**
+ * Run one FFT over a mono block of samples and reduce it to FREQ_BANDS display
+ * values in the range 0..1.
+ *
+ * Pipeline:
+ *  1. Window and normalise. Samples are scaled by 1/32768 (int16 full scale) with
+ *     a 3x gain, then multiplied by a Hann window. Windowing suppresses the
+ *     spectral leakage you would otherwise get from the discontinuity at the
+ *     block boundary. The imaginary half of each complex pair is zeroed -- the
+ *     input is a real signal.
+ *  2. Transform, using esp-dsp's radix-2 routines. The three calls are a set and
+ *     must run in this order: the FFT leaves output in bit-reversed order,
+ *     dsps_bit_rev_fc32() reorders it, and dsps_cplx2reC_fc32() splits the packed
+ *     result back into two real spectra.
+ *  3. Magnitude and scale to decibels. sqrt(re^2+im^2) is clamped away from zero
+ *     first because log10(0) is -infinity. 20*log10() converts amplitude to dB,
+ *     then (dB + 40)/40 maps a -40..0 dB window onto 0..1 for display -- i.e.
+ *     anything quieter than -40 dBFS clamps to zero and disappears from the bars.
+ *  4. Average the 256 useful bins down into FREQ_BANDS equal-width groups.
+ *
+ * Note the banding is linear in frequency, not logarithmic, so with SAMPLE_RATE
+ * 16 kHz each of the 16 bands spans a flat 500 Hz. That is cheap and looks fine
+ * as a VU-style visualiser, but it does not match how pitch is perceived: nearly
+ * all musical content lands in the first band or two.
+ *
+ * @param channel_data  FFT_SIZE mono samples
+ * @param bands         output array of FREQ_BANDS floats, each 0..1
+ * @param freq_per_bin  currently unused; retained for callers that want to label axes
+ * @see https://docs.espressif.com/projects/esp-dsp/en/latest/esp32/esp-dsp-apis.html
+ */
 static void process_channel_fft(int16_t *channel_data, float *bands, float freq_per_bin)
 {
     for (int i = 0; i < FFT_SIZE; i++) {
@@ -412,15 +578,16 @@ static void process_channel_fft(int16_t *channel_data, float *bands, float freq_
     dsps_bit_rev_fc32(fft_input, FFT_SIZE);
     dsps_cplx2reC_fc32(fft_input, FFT_SIZE);
 
+    // Only the first half of the spectrum is meaningful; the rest mirrors it.
     float magnitudes[FFT_SIZE / 2];
     for (int i = 0; i < FFT_SIZE / 2; i++) {
         float real = fft_input[2 * i];
         float imag = fft_input[2 * i + 1];
         magnitudes[i] = sqrt(real * real + imag * imag);
 
-        if (magnitudes[i] < 0.00001) magnitudes[i] = 0.00001;
-        magnitudes[i] = 20 * log10(magnitudes[i]);
-        magnitudes[i] = (magnitudes[i] + 40) / 40;
+        if (magnitudes[i] < 0.00001) magnitudes[i] = 0.00001;    // guard log10(0)
+        magnitudes[i] = 20 * log10(magnitudes[i]);               // amplitude -> dBFS
+        magnitudes[i] = (magnitudes[i] + 40) / 40;               // -40..0 dB -> 0..1
         magnitudes[i] = constrain(magnitudes[i], 0, 1);
     }
 
@@ -452,6 +619,16 @@ static void process_channel_fft(int16_t *channel_data, float *bands, float freq_
 #endif /*ARDUINO*/
 
 
+/**
+ * Capture one block of stereo audio and produce both channels' spectra.
+ *
+ * Blocking read: the I2S/codec read waits for FFT_SIZE stereo frames, so at
+ * SAMPLE_RATE this returns roughly every 32 ms. Called from the microphone app's
+ * refresh timer.
+ *
+ * On the emulator this is a no-op and `fft_data` is left untouched, so callers
+ * must initialise it.
+ */
 void hw_audio_get_fft_data(FFTData *fft_data)
 {
 #ifdef ARDUINO
@@ -531,14 +708,39 @@ void hw_set_mic_stop()
 
 #if  defined(USING_ST25R3916) && defined(ARDUINO)
 
-extern void ui_nfc_pop_up(wifi_conn_params_t &params);
+extern void ui_nfc_pop_up(wifi_conn_params_t &params);  // ui_nfc.cpp
 
+/**
+ * Tag-detected notification from the RFAL driver. Fires as soon as a tag is in
+ * the field, before its contents are parsed, so the user gets immediate haptic
+ * confirmation that they held the card in the right place.
+ */
 static void nrf_notify_callback()
 {
     Serial.println("NDEF Detected.");
-    hw_feedback();
+    hw_feedback();      // buzz the vibration motor
 }
 
+/**
+ * Called once per decoded NDEF record; turns tag contents into UI actions.
+ *
+ * `data` points into the RFAL parser's own storage and is only valid for the
+ * duration of this call, so each branch copies out what it needs before doing
+ * anything else. The `static` locals exist to keep those copies alive after the
+ * callback returns, since the pop-ups they feed outlive it -- which also means
+ * this function is not reentrant, and relies on being called only from
+ * loopNFCReader() on the main task.
+ *
+ * Handled record types: Text and URI raise a generic message box; Wi-Fi handoff
+ * records go to ui_nfc_pop_up(), which offers to join the network. Device-info
+ * and AAR (Android Application Record) are only logged, and media/vCard records
+ * are accepted but ignored.
+ *
+ * Note the string fields are printed via reinterpret_cast to `const char *`:
+ * NDEF payloads are length-delimited and not guaranteed NUL-terminated, so this
+ * trusts the parser to have terminated them. The Wi-Fi branch is the careful
+ * one -- it builds std::strings from an explicit buffer+length pair.
+ */
 static void ndef_event_callback(ndefTypeId id, void *data)
 {
     static ndefTypeRtdDeviceInfo   devInfoData;
@@ -596,6 +798,11 @@ static void ndef_event_callback(ndefTypeId id, void *data)
 
 
 
+/**
+ * Power up the NFC front end and start polling for tags.
+ * The rail is switched on first -- beginNFC() talks to the chip over SPI and
+ * would fail if it were still unpowered. Returns false on boards without NFC.
+ */
 bool hw_start_nfc_discovery()
 {
 #if  defined(USING_ST25R3916) && defined(ARDUINO)
@@ -606,6 +813,11 @@ bool hw_start_nfc_discovery()
 #endif
 }
 
+/**
+ * Stop polling and cut power to the NFC front end. The RF field is a continuous
+ * draw on the battery, so leaving discovery running after the NFC app closes
+ * would be costly -- hence the paired call from the app's exit callback.
+ */
 void hw_stop_nfc_discovery()
 {
 #if  defined(USING_ST25R3916) && defined(ARDUINO)
@@ -614,6 +826,9 @@ void hw_stop_nfc_discovery()
 #endif
 }
 
+/// Microphone preamp gain applied to the codec at startup. Both branches
+/// currently use the same value; the #ifdef is a hook for per-board tuning,
+/// since the Pager and the watches use different microphone placements.
 #ifdef ARDUINO_T_LORA_PAGER
 const uint8_t mic_gain = 10;
 #else
@@ -621,12 +836,25 @@ const uint8_t mic_gain = 10;
 #endif
 
 
+/**
+ * Application-level hardware bring-up, called from setup()/main() after the
+ * board library itself is initialised.
+ *
+ * Whereas instance.begin() probes and powers the peripherals, this function
+ * configures them for how *this app* wants to use them: it starts the audio
+ * player task, selects the radio driver, wires up key-press feedback, and
+ * restores persisted user settings.
+ */
 void hw_init()
 {
 #ifdef ARDUINO
+    // Depth of 2: enough to queue a click sound behind a track without letting
+    // requests pile up unboundedly if the player is busy.
     playerQueue =  xQueueCreate(2, sizeof(audio_params_t));
     playerEvent =  xEventGroupCreate();
 
+    // Resolves to whichever hw_<radio>.cpp was compiled in, selected by the
+    // ARDUINO_LILYGO_LORA_* build flag in platformio.ini.
     hw_radio_begin();
 
 #ifdef USING_EXTERN_NRF2401
@@ -644,8 +872,11 @@ void hw_init()
 #endif //USING_AUDIO_CODEC
 
 #ifdef USING_INPUT_DEV_KEYBOARD
+    // Enable haptic feedback on key presses, with an 80 ms pulse.
     instance.attachKeyboardFeedback(true, 80);
 
+    // Feedback callback: buzz on every input, and additionally play a click
+    // sound for physical key presses (LV_INDEV_TYPE_KEYPAD) but not for touch.
     instance.setFeedbackCallback([](void *args) {
 
         lv_indev_t *drv = (lv_indev_t *)args;
@@ -658,6 +889,12 @@ void hw_init()
                 .event = APP_EVENT_PLAY_KEY,
                 .filename = NULL
             };
+            // Pre-empt whatever is playing so fast typing produces one click per
+            // key rather than a backlog: ask the decoder to stop (PLAYER_END),
+            // spin until it actually has, then re-arm and queue the new click.
+            //
+            // This busy-wait runs on the caller's task -- acceptable only because
+            // a click is a few tens of milliseconds long.
             xEventGroupClearBits(playerEvent, PLAYER_PLAY | PLAYER_END);
             if (hw_player_running()) {
                 xEventGroupSetBits(playerEvent, PLAYER_END);
@@ -677,8 +914,14 @@ void hw_init()
 #endif //USING_INPUT_DEV_KEYBOARD
 
 
+    // Priority 12 is above the Arduino loop task (priority 1), so audio decoding
+    // is not starved by UI rendering and playback does not stutter.
     xTaskCreate(playerTask, "app/play", 8 * 1024, NULL, 12, &playerTaskHandler);
 
+    // Restore persisted settings from NVS. The size comparison is the only
+    // validation: a short/absent read means either first boot or a
+    // user_setting_params_t whose layout changed since it was written, and both
+    // are handled by falling back to defaults and rewriting the blob.
     prefs.begin(NVS_NAME);
     if (prefs.getBytes(NVS_NAME, &user_setting, sizeof(user_setting_params_t)) != sizeof(user_setting_params_t)) {  // simple check that data fits
         log_e("Data is not correct size!,set default setting");
@@ -690,12 +933,16 @@ void hw_init()
         prefs.putBytes(NVS_NAME, &user_setting, sizeof(user_setting_params_t));
     }
 
+    // Trust the PMU's current register over the stored value: the charger may
+    // have been clamped by hardware limits since the setting was saved.
     user_setting.charger_current = hw_get_charger_current();
 
     hw_set_disp_backlight(user_setting.brightness_level);
 
     hw_set_kb_backlight(user_setting.keyboard_bl_level);
 
+    // Power-button events from the PMU. Currently only logged -- the hook is here
+    // for apps that want to intercept the side button.
     instance.onEvent([](DeviceEvent_t event, void *params, void *user_data) {
         if (instance.getPMUEventType(params) == PMU_EVENT_KEY_CLICKED) {
             log_d("ON EVENT PMU CLICK");
@@ -704,6 +951,7 @@ void hw_init()
 
 
 #else
+    // Emulator: no NVS, so start from fixed defaults every run.
     user_setting.brightness_level = 10;
     user_setting.keyboard_bl_level = 255;
     user_setting.disp_timeout_second = 30;
@@ -863,6 +1111,12 @@ int16_t hw_get_wifi_rssi()
     return -99;
 }
 
+/**
+ * Battery voltage in millivolts, from the best source the board has:
+ * a dedicated TI BQ fuel gauge if one is fitted (more accurate, and it must be
+ * refreshed before reading), otherwise the PMU's ADC. Returns 0 when neither is
+ * available -- callers should treat 0 as "unknown", not "flat".
+ */
 int16_t hw_get_battery_voltage()
 {
 #ifdef ARDUINO
@@ -886,6 +1140,13 @@ int16_t hw_get_battery_voltage()
 #endif
 }
 
+/**
+ * Size of the storage backing the audio files.
+ *
+ * Note the units differ by branch, and callers must label accordingly: an SD
+ * card is reported in GB, the internal FFat partition in MB (a partition sized
+ * in megabytes would round to 0.0 in GB).
+ */
 float hw_get_sd_size()
 {
     float size = 0.0;
@@ -918,6 +1179,15 @@ void hw_get_arduino_version(string &param)
 }
 
 
+/**
+ * Watch the GNSS receiver's pulse-per-second output.
+ *
+ * PPS is a hardware square wave the receiver emits only once it has a valid time
+ * solution, so a toggling line is direct proof of a fix -- independent of whether
+ * any NMEA has been parsed yet. The ISR simply flips `pps_trigger`; the GPS app
+ * shows it as a blinking indicator. GPS_PPS comes from the board's
+ * variants/lilygo_<board>/pins_arduino.h and is absent on boards without it.
+ */
 void hw_gps_attach_pps()
 {
 #ifdef GPS_PPS
@@ -928,6 +1198,10 @@ void hw_gps_attach_pps()
 #endif
 }
 
+/**
+ * Stop watching PPS and park the pin as open-drain, so the interrupt does not
+ * keep waking the CPU once the GPS app is closed.
+ */
 void hw_gps_detach_pps()
 {
 #ifdef GPS_PPS
@@ -936,6 +1210,18 @@ void hw_gps_detach_pps()
 #endif
 }
 
+/**
+ * Pump the NMEA parser and fill in the current fix.
+ *
+ * Rate-limited to once per second (except in debug mode, which streams raw
+ * sentences), because a GNSS receiver only produces a new solution at ~1 Hz and
+ * parsing more often just burns CPU.
+ *
+ * @return true if `param` was refreshed, false if the call was skipped by the
+ *         rate limiter -- in which case `param` is left as the caller set it.
+ * @note   `param` is memset partway through, so the caller's `enable_debug` is
+ *         read into a local first; anything else the caller pre-set is cleared.
+ */
 bool hw_get_gps_info(gps_params_t &param)
 {
 #ifdef ARDUINO
@@ -1096,6 +1382,17 @@ bool hw_get_wifi_scanning()
 }
 
 
+/**
+ * Collect the results of the scan started by hw_set_wifi_scan().
+ *
+ * WiFi.scanComplete() returns a negative sentinel while the scan is still
+ * running (WIFI_SCAN_RUNNING) or if none was started (WIFI_SCAN_FAILED), which
+ * is why a negative count is simply logged and the list left empty rather than
+ * treated as an error -- the UI polls this until entries appear.
+ *
+ * On the emulator a single fake network is returned so the WiFi app has
+ * something to render.
+ */
 void hw_get_wifi_scan_result(vector < wifi_scan_params_t > &list)
 {
     list.clear();
@@ -1336,6 +1633,12 @@ uint8_t hw_get_volume()
 #endif //USING_AUDIO_CODEC
 }
 
+/**
+ * Full power off. The backlight is faded to zero first (in steps of 5) so the
+ * screen dims smoothly instead of cutting to black, then the power management
+ * chip is told to drop the rails. Only a charger insertion or the power button
+ * brings the device back; this does not return.
+ */
 void hw_shutdown()
 {
 #ifdef ARDUINO
@@ -1348,6 +1651,15 @@ void hw_shutdown()
 #endif
 }
 
+/**
+ * Enter deep sleep.
+ *
+ * The I2S peripherals are shut down explicitly before sleeping -- an active DMA
+ * channel would otherwise hold a power domain awake and defeat the sleep.
+ * Killing the player task with vTaskDelete() is abrupt (it does not get to free
+ * its decoder), which is acceptable only because the whole context is discarded
+ * on wake: deep sleep resets the CPU and boot restarts from setup().
+ */
 void hw_sleep()
 {
 #ifdef ARDUINO
@@ -1479,6 +1791,20 @@ uint8_t hw_get_charger_current_level()
 #endif
 }
 
+/**
+ * Set the battery charge current by UI step index rather than by milliamps.
+ *
+ * The two power chips are configured differently and the UI should not have to
+ * know which is fitted:
+ *   - PPM: accepts an arbitrary current, so the level is a simple multiple of
+ *     `charge_steps`.
+ *   - PMU: only supports a fixed ladder of currents, so `level` indexes the
+ *     lookup table below and is clamped to its last entry.
+ *
+ * @param  level  step index, 0 .. hw_get_charge_level_nums()-1
+ * @return the actual current in mA that was programmed, which the caller should
+ *         display instead of assuming the requested value took effect
+ */
 uint16_t hw_set_charger_current_level(uint8_t level)
 {
 #ifdef ARDUINO
@@ -1792,6 +2118,14 @@ void hw_feedback()
 #endif
 }
 
+/**
+ * One idle iteration of the low-power (screen-off) loop.
+ *
+ * Unlike hw_sleep(), light sleep preserves RAM and task state, so this call
+ * returns and execution continues where it left off -- the display is off but
+ * timers, WiFi and the RTC keep running. Any configured wake source (touch, a
+ * key, the PMU IRQ) ends the sleep.
+ */
 void hw_low_power_loop()
 {
 #ifdef ARDUINO
@@ -2127,6 +2461,14 @@ const char *hw_get_device_power_tips_string()
 #endif
 }
 
+/**
+ * MD5 of the running firmware image, as a 32-character hex string.
+ *
+ * Computed by the bootloader over the app partition, so it identifies exactly
+ * which build is flashed -- useful when several test images look alike. Shown in
+ * the system-info app. The buffer is a function-local static: the returned
+ * pointer stays valid but is overwritten by the next call.
+ */
 const char *hw_get_firmware_hash_string()
 {
 #ifdef ARDUINO
@@ -2138,6 +2480,14 @@ const char *hw_get_firmware_hash_string()
 #endif
 }
 
+/**
+ * The chip's unique ID, formatted as 12 hex characters.
+ *
+ * Derived from the factory-programmed base MAC address burned into eFuse, which
+ * is unique per ESP32 and immutable -- so it serves as a device serial number.
+ * The 64-bit value holds a 48-bit MAC, hence printing the top 16 bits and the
+ * low 32 bits separately.
+ */
 const char *hw_get_chip_id_string()
 {
 #ifdef ARDUINO
@@ -2151,6 +2501,13 @@ const char *hw_get_chip_id_string()
 }
 
 
+/**
+ * Steer the shared antenna path on boards that have an RF switch
+ * (T-Watch-Ultra). One antenna connector is multiplexed, so only one consumer
+ * can use it at a time.
+ *
+ * @param to_usb  true routes the path to the USB-side connector, false to the radio
+ */
 void hw_set_usb_rf_switch(bool to_usb)
 {
 #ifdef ARDUINO

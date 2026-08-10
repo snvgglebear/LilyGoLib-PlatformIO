@@ -6,6 +6,16 @@
  * @date      2025-01-06
  *
  */
+/**
+ * @brief Calendar app -- a demonstration of LVGL's calendar widget.
+ *
+ * Purely a UI showcase: the displayed month and the highlighted days are
+ * hard-coded to February 2021 rather than being read from the system clock or
+ * the RTC, and selecting a date does nothing (the event handler is commented
+ * out). It is here to exercise the widget, not to function as a diary.
+ *
+ * @see https://docs.lvgl.io/master/details/widgets/calendar.html
+ */
 #include "ui_define.h"
 
 static lv_obj_t *menu = NULL;

@@ -6,19 +6,41 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief nRF24 test app -- tune and link-test the optional 2.4 GHz module.
+ *
+ * The nRF24 counterpart to ui_radio.cpp, and structured the same way: settings
+ * rows feeding a working copy, then a TX/RX counter loopback to verify the link.
+ * Two units with matching settings, one transmitting and one receiving, is the
+ * intended test.
+ *
+ * Only compiled when USING_EXTERN_NRF2401 is defined (T-LoRa-Pager with the
+ * plug-in module), and the launcher additionally hides the icon at runtime if
+ * the module did not answer at boot -- see hw_has_nrf24().
+ *
+ * Note the option sets are much smaller than the LoRa app's, because the nRF24
+ * is a simpler part: no spreading factor or coding rate, just a channel, a bit
+ * rate, and four discrete power levels.
+ *
+ * @see hw_nrf2401.cpp for the driver, including the hard-coded pipe address that
+ *      determines which units can hear each other.
+ */
 #include "ui_define.h"
 
 #ifdef USING_EXTERN_NRF2401
 
+// Dropdown captions, paired index-for-index with the *_args_list arrays below.
 #define RADIO_FREQUENCY_LIST    "2400MHz\n""2424MHz\n""2450MHZ\n""2500MHz\n""2525MHz"
 #define RADIO_TX_POWER_LIST     "-18dBm\n""-12dBm\n""-6dBm\n""0dBm"
 #define RADIO_INTERVAL_LIST     "1000ms\n""2000ms\n""3000ms"
 #define RADIO_MODE_LIST         "Disable\n""TX Mode\n""RX Mode"
 #define RADIO_CR_LIST           "1000kbp\n""2000kbp\n""250kbp"       //bit rate
 
-static const float radio_freq_args_list[] = {2400.0, 2424.0, 2450, 2500.0, 2525.0};
-static const float radio_power_args_list[] = {-18, -12, -6, 0};
-static const uint16_t radio_interval_args_list[] = {1000, 2000, 3000};
+static const float radio_freq_args_list[] = {2400.0, 2424.0, 2450, 2500.0, 2525.0}; ///< channel centre, MHz
+static const float radio_power_args_list[] = {-18, -12, -6, 0};                     ///< the chip's four PA steps, dBm
+static const uint16_t radio_interval_args_list[] = {1000, 2000, 3000};              ///< ms between test packets
+/// Bit rates in kbps. Note the list is *not* in ascending order -- 250 kbps is
+/// last, matching the caption order above; the lowest rate gives the best range.
 static const uint16_t radio_dr_args_list[] = {1000, 2000, 250};
 
 static lv_obj_t *menu = NULL;

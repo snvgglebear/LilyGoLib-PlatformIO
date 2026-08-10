@@ -6,6 +6,17 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief Physical keyboard test -- verify every key on the T-LoRa-Pager keypad.
+ *
+ * Provides a text area fed by the hardware keyboard so each key can be checked
+ * for correct scancode, and exercises the trackball and keyboard backlight.
+ * Only offered on boards with USING_INPUT_DEV_KEYBOARD, and only when
+ * hw_has_keyboard() confirms the keypad answered at boot.
+ *
+ * @note The `gps_label_t` struct and `label_gps` below are leftovers from
+ *       ui_gps.cpp, which this file was copied from. They are unused here.
+ */
 #include "ui_define.h"
 
 typedef struct {

@@ -25,9 +25,21 @@
  *
  * Frame: 20ms G.722 @ 64kbps = 160 bytes per ESP-NOW packet
  *
+ * Why ESP-NOW rather than the LoRa radio: ESP-NOW is a connectionless 2.4 GHz
+ * protocol built on the WiFi PHY, needing no access point and no association
+ * handshake. It carries the ~64 kbps this codec produces, which LoRa cannot --
+ * a single 20 ms voice frame would take longer than that to transmit at any
+ * usable spreading factor. The trade-off is range: tens of metres, not kilometres.
+ *
+ * Audio is unencrypted and broadcast to the whole channel, so anyone in range
+ * running this app hears it.
+ *
  * Requirements:
  *  - PCMFlow library (https://github.com/lbuque/PCMFlow)
  *  - PCMFlowG722 library (https://github.com/tanakamasayuki/PCMFlowG722)
+ *
+ * @see ESP-NOW: https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/network/esp_now.html
+ * @see ITU-T G.722 (wideband speech codec): https://www.itu.int/rec/T-REC-G.722
  */
 #include "ui_define.h"
 #ifdef ARDUINO
@@ -35,6 +47,11 @@
 #endif
 
 // Version marked, new version not compatible
+//
+// Gated on both the board (the Pager's codec hardware) and the toolchain: the
+// I2S/ESP-NOW usage below does not compile against arduino-esp32 newer than
+// 3.0.0. ui_main.cpp applies the identical condition when registering the app,
+// so on a newer core the icon disappears rather than the build breaking.
 #if (ESP_ARDUINO_VERSION <= ESP_ARDUINO_VERSION_VAL(3,0,0)) && defined(ARDUINO_T_LORA_PAGER)
 
 #include <esp_now.h>
@@ -49,22 +66,40 @@ LV_IMG_DECLARE(img_microphone);
 // ============================================================
 // Constants
 // ============================================================
+// Audio format. 16 kHz mono is "wideband" speech -- twice the bandwidth of a
+// telephone call, which is what G.722 was designed for. The 20 ms frame is the
+// standard trade-off: shorter frames lower latency but spend proportionally more
+// airtime on per-packet overhead.
 static constexpr uint16_t    kSampleRate    = 16000;
 static constexpr uint8_t     kChannels      = 1;
 static constexpr uint8_t     kBitsPerSample = 16;
 static constexpr size_t      kFrameSamples  = 320;   // 20ms @ 16kHz
 static constexpr size_t      kFrameBytes    = 160;   // G.722: 2 PCM -> 1 byte
+// ESP-NOW peers must sit on the same WiFi channel. This default only applies
+// when WiFi is offline; if a network is joined, the app locks to that channel
+// instead, since the radio cannot be on two channels at once.
 static constexpr uint8_t     kWifiChannel   = 1;     // default when WiFi is offline
+// Receive queue depth in frames = 160 ms of buffered audio. Deep enough to ride
+// out scheduling jitter, shallow enough that a backlog is heard as a dropout
+// rather than a growing delay.
 static constexpr size_t      kRxQueueDepth  = 8;
 static constexpr uint32_t    kTaskStack     = 4096;
+// Above the Arduino loop task, so decoding and playback are not starved by UI
+// rendering -- audio glitches are far more noticeable than a dropped frame.
 static constexpr UBaseType_t kTaskPrio      = 10;
 
 static constexpr size_t      kNickMax       = 20;    // incl. terminating null
+/// Magic bytes marking a control packet. Together with the packet length (a
+/// hello is not kFrameBytes long) this is how the receiver tells announcements
+/// from audio without a header on every frame.
 static const char            kHelloMagic[4] = {'W', 'L', 'K', 'H'};
 static constexpr uint32_t    kAnnounceMs    = 2000;  // hello broadcast period
+// Peers are dropped after ~7 missed announcements, so a device that walks out of
+// range disappears from the contact list without a goodbye message.
 static constexpr uint32_t    kContactTtlMs  = 15000; // drop peers gone this long
 static constexpr size_t      kHelloQueueLen = 8;
 
+/// ESP-NOW broadcast address: every peer on the channel receives these packets.
 static const uint8_t s_broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // ---- Wire formats ------------------------------------------

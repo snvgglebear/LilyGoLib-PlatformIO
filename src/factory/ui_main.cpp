@@ -5,9 +5,42 @@
  * @copyright Copyright (c) 2025  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2025-01-04
  *
+ * @brief     Launcher, home screen, and app lifecycle owner.
+ *
+ * This is the root of the UI. setupGui() (at the bottom of the file) is called
+ * once from factory.ino / main.cpp and builds everything else.
+ *
+ * Screen structure -- the whole UI lives in a two-tile LVGL tileview,
+ * `main_screen`:
+ *   - tile (0,0) is the launcher: a horizontally scrolling row of app icons plus
+ *     the clock/status face.
+ *   - tile (0,1) is the container that whichever app is currently open builds
+ *     itself into.
+ * Opening an app slides to tile 1 (menu_hidden()); closing it slides back
+ * (menu_show()). Only one app exists at a time -- its widgets are destroyed on
+ * exit.
+ *
+ * App registration: each `ui_<feature>.cpp` exports a global `app_t` (declared
+ * extern here) and is placed on the launcher by a create_app() call in
+ * setupGui(). To add an app, write the file, declare its `app_t`, and add one
+ * create_app() line. Apps whose hardware is absent are skipped, so the launcher
+ * reflects what the board actually has.
+ *
+ * Also owned here:
+ *   - the LVGL input groups (`menu_g` for the launcher, `app_g` for the open
+ *     app) and the encoder/keyboard focus routing between them,
+ *   - the display-timeout and low-power state machine (see disp_timer_cb),
+ *   - the clock face and its per-second refresh timer.
+ *
+ * @see LVGL tileview: https://docs.lvgl.io/master/details/widgets/tileview.html
+ * @see LVGL groups:   https://docs.lvgl.io/master/details/main-components/indev.html#groups
  */
 #include "ui_define.h"
 
+// Icon bitmaps and fonts. These are generated C arrays living in
+// src/factory/src/ and src/factory/src/font/ -- LV_IMG_DECLARE / LV_FONT_DECLARE
+// just make the symbols visible here without a header per asset.
+// @see https://docs.lvgl.io/master/details/main-components/image.html
 LV_IMG_DECLARE(img_microphone);
 LV_IMG_DECLARE(img_ir_remote);
 LV_IMG_DECLARE(img_music);
@@ -44,38 +77,58 @@ LV_FONT_DECLARE(font_alibaba_40);
 LV_FONT_DECLARE(font_alibaba_60);
 LV_FONT_DECLARE(font_alibaba_100);
 
+/// Reuses one of LVGL's user-definable object flags as a boolean stored on
+/// `main_screen`: set when the currently open app is willing to let the device
+/// sleep. Apps that must keep running (audio playback, a radio receive loop)
+/// clear it via set_low_power_mode_flag(false).
 #define DEVICE_CAN_SLEEP                (LV_OBJ_FLAG_USER_1)
+/// Fallback idle timeout in ms, used when the user setting is 0/unset.
 #define SCREEN_TIMEOUT 10000
 
-lv_obj_t *main_screen;
-lv_obj_t *menu_panel;
-lv_group_t *menu_g, *app_g;
-static lv_timer_t *clock_timer;
+lv_obj_t *main_screen;              ///< the root tileview; also declared extern in ui_define.h
+lv_obj_t *menu_panel;               ///< scrolling row of app icons on tile (0,0)
+lv_group_t *menu_g, *app_g;         ///< input focus groups: launcher vs. open app
+static lv_timer_t *clock_timer;     ///< 1 Hz clock-face refresh
 static lv_obj_t *clock_page;
-static lv_timer_t *disp_timer = NULL;
-static lv_timer_t *dev_timer = NULL;
-static uint32_t disp_time_ms = 0;
+static lv_timer_t *disp_timer = NULL;   ///< idle/backlight timeout state machine
+static lv_timer_t *dev_timer = NULL;    ///< periodic device-status (battery etc.) refresh
+static uint32_t disp_time_ms = 0;       ///< configured idle timeout in ms
 
+/// Widgets of the clock face, cached so the 1 Hz timer can update their text
+/// without walking the object tree.
 typedef struct {
     lv_obj_t *hour;
     lv_obj_t *minute;
     lv_obj_t *date;
-    lv_obj_t *seg;
+    lv_obj_t *seg;              ///< the blinking ":" between hours and minutes
     lv_obj_t *battery_bar;
     lv_obj_t *battery_label;
 } clock_label_t;;
 
 static clock_label_t clock_label;
 
+/// LVGL 9 replaced the global lv_msg_send() bus with per-object custom event
+/// codes, which must be allocated at runtime. This holds the allocated code for
+/// "the focused app's name changed"; under LVGL 8 the MSG_MENU_NAME_CHANGED
+/// constant is used instead.
 #if LVGL_VERSION_MAJOR == 9
 static uint32_t name_change_id;
 #endif
 
 
-static lv_obj_t *desc_label;
+static lv_obj_t *desc_label;    ///< caption under the icon row, shows the focused app's name
+
+// RTC_DATA_ATTR keeps these in RTC slow memory, which survives deep sleep, so
+// the screen comes back at the brightness it had before sleeping rather than
+// flashing to a default. On the emulator the attribute is defined away
+// (ui_define.h) and they are ordinary globals.
 static RTC_DATA_ATTR uint8_t brightness_level = 0;
 static RTC_DATA_ATTR uint8_t keyboard_level = 0;
 
+/**
+ * Declare whether the device may drop into low power while this app is open.
+ * @see disp_timer_cb(), which consumes the flag.
+ */
 void set_low_power_mode_flag(bool enable)
 {
     if (enable) {
@@ -91,6 +144,12 @@ bool get_enter_low_power_flag()
     return rlst;
 }
 
+/**
+ * Return to the launcher: hand focus back to the launcher group, slide to tile
+ * (0,0), and restart the idle timer (which is paused while an app is open, so
+ * apps do not get blanked mid-use). lv_disp_trig_activity() resets the idle
+ * counter so the timeout is measured from now.
+ */
 void menu_show()
 {
     set_default_group(menu_g);
@@ -100,17 +159,31 @@ void menu_show()
     hw_feedback();
 }
 
+/// Slide to the app tile and suspend the idle timer. Paired with menu_show().
 void menu_hidden()
 {
     lv_tileview_set_tile_by_index(main_screen, 0, 1, LV_ANIM_ON);
     lv_timer_pause(disp_timer);
 }
 
+/// True when the launcher (rather than an app) is in front.
 bool isinMenu()
 {
     return !lv_obj_has_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
 }
 
+/**
+ * Route every input device to `group`, so navigation keys, the encoder and the
+ * trackball move focus within it.
+ *
+ * LVGL has no "set the group on all devices" call, so this walks the linked list
+ * of registered input devices with lv_indev_get_next(NULL) and assigns each one.
+ * Pointer (touch) devices are included as well, which is what allows a touch to
+ * take focus and keep the two input styles in sync on the watches.
+ *
+ * This is the mechanism behind the launcher/app split: menu_show() points
+ * everything at `menu_g`, opening an app points it at `app_g`.
+ */
 void set_default_group(lv_group_t *group)
 {
     lv_indev_t *cur_drv = NULL;
@@ -133,6 +206,9 @@ void set_default_group(lv_group_t *group)
 }
 
 
+/// Icon focus handler: pushes the newly focused app's name to `desc_label`.
+/// The v8/v9 split exists because LVGL 9 dropped the global message bus in
+/// favour of object-targeted custom events (see `name_change_id`).
 static void btn_event_cb(lv_event_t *e)
 {
     lv_event_code_t c = lv_event_get_code(e);
@@ -146,6 +222,28 @@ static void btn_event_cb(lv_event_t *e)
     }
 }
 
+/**
+ * Register one app on the launcher: create its icon button and wire the two
+ * events that drive the app lifecycle.
+ *
+ * This is the only place an `app_t` is connected to the UI, so the plug-in
+ * contract in ui_define.h is entirely realised here:
+ *   - LV_EVENT_FOCUSED -> update the caption under the icon row.
+ *   - LV_EVENT_CLICKED -> switch input focus to `app_g`, invoke the app's
+ *     setup_func_cb with tile (0,1) as its parent, and slide that tile into view.
+ *
+ * `app_fun` is stored as the click callback's user data, which is why callers
+ * must pass a pointer to a global (not a temporary) `app_t`.
+ *
+ * Note the exit path is *not* here: an app closes itself, typically via the
+ * floating back button it creates, which calls its own exit_func_cb and
+ * menu_show().
+ *
+ * @param parent   the icon row (`menu_panel`)
+ * @param name     caption shown when the icon is focused; must outlive the button
+ * @param img      icon bitmap, or NULL for a blank button
+ * @param app_fun  the app's lifecycle callbacks
+ */
 static void create_app(lv_obj_t *parent, const char *name, const lv_img_dsc_t *img, app_t *app_fun)
 {
     lv_obj_t *btn = lv_btn_create(parent);
@@ -157,6 +255,8 @@ static void create_app(lv_obj_t *parent, const char *name, const lv_img_dsc_t *i
     lv_obj_set_style_outline_color(btn, lv_color_black(), LV_STATE_FOCUS_KEY);
     lv_obj_set_style_shadow_width(btn, 30, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(btn, lv_color_black(), LV_PART_MAIN);
+    // On the small 240x240 watch panels a circular icon reads better than a
+    // rounded rectangle; the wider Ultra/Pager screens keep the default shape.
     uint32_t phy_hor_res = lv_display_get_physical_horizontal_resolution(NULL);
     if (phy_hor_res < 320) {
         lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
@@ -423,6 +523,18 @@ static void scrollbar_change_cb(lv_event_t *e)
 #endif
 
 
+/**
+ * Low-battery watchdog, run periodically by `dev_timer`.
+ *
+ * Below 3300 mV a single-cell lithium battery is nearly exhausted, and letting
+ * it drop further risks damaging the cell -- so rather than warn, the firmware
+ * shuts itself down. The `usb_voltage == 0` term is essential: while charging,
+ * the measured battery voltage can legitimately sit low, and shutting down on
+ * that would make the device impossible to recharge.
+ *
+ * lv_refr_now() forces the warning screen to be drawn synchronously, since
+ * hw_shutdown() never returns and the normal redraw would never happen.
+ */
 static void hw_device_poll(lv_timer_t *t)
 {
     monitor_params_t params;
@@ -449,6 +561,32 @@ static void hw_device_poll(lv_timer_t *t)
     }
 }
 
+/**
+ * Idle / power-state machine, run periodically by `disp_timer`.
+ *
+ * There are three states, entered in sequence as the device stays idle, and any
+ * user input collapses straight back to the first:
+ *
+ *  1. ACTIVE     -- launcher visible, CPU at 240 MHz, keyboard backlight on.
+ *
+ *  2. WATCH FACE -- after SCREEN_TIMEOUT of inactivity, *and* only if the open
+ *     app permits it (get_enter_low_power_flag(), set via
+ *     set_low_power_mode_flag()). The launcher is hidden, the clock page shown,
+ *     the keyboard backlight saved and switched off, and the CPU dropped to
+ *     80 MHz. The keyboard level is stashed in `keyboard_level` so it can be
+ *     restored exactly, rather than reset to a default.
+ *
+ *  3. DISPLAY OFF -- after a further hw_get_disp_timeout_ms() (the user setting;
+ *     0 disables this step entirely). The backlight is faded out, its level
+ *     saved in RTC memory, and hw_low_power_loop() puts the SoC into light
+ *     sleep. That call blocks until a wake source fires, so everything after it
+ *     is the wake-up path: restore the screen, clock speed and brightness, and
+ *     reset the activity timer so the machine restarts from state 1.
+ *
+ * NO_ENTER_LIGHT_SLEEP swaps the light-sleep call for a busy-wait on the BOOT
+ * button, which is useful when debugging, since light sleep disconnects USB
+ * serial.
+ */
 static void ui_poll_timer_callback(lv_timer_t *t)
 {
     bool timeout = lv_display_get_inactive_time(NULL) > SCREEN_TIMEOUT;
@@ -520,9 +658,25 @@ static void ui_poll_timer_callback(lv_timer_t *t)
     }
 }
 
+/**
+ * Build the entire UI. Called once, from setup() on hardware or main() on the
+ * emulator, after hw_init() has brought the peripherals up.
+ *
+ * Order of construction:
+ *   1. Splash screen (blocking, 5 s).
+ *   2. Theme: LVGL's dark default theme, restyled by theme_init() in ui_theme.cpp.
+ *      MAIN_FONT comes from the per-board block in hal_interface.h, so the text
+ *      size matches the panel.
+ *   3. Input groups and the two-tile tileview described at the top of this file.
+ *   4. App registration -- the long run of create_app() calls below.
+ *   5. Clock face, then the periodic timers.
+ */
 void setupGui()
 {
 
+    // Splash screen. lv_refr_now() draws it synchronously, then the UI is
+    // blocked for 5 seconds -- nothing else can run during this delay, which is
+    // acceptable only because it happens once at boot.
     lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_radius(lv_screen_active(), 0, 0);
     lv_obj_t *start_logo = lv_label_create(lv_screen_active());
@@ -543,7 +697,8 @@ void setupGui()
 
     theme_init();
 
-    // Create groups
+    // Two focus groups, swapped by set_default_group() as apps open and close.
+    // The launcher starts focused.
     menu_g = lv_group_create();
     app_g = lv_group_create();
     set_default_group(menu_g);
@@ -570,6 +725,8 @@ void setupGui()
     lv_obj_remove_flag(main_screen, LV_OBJ_FLAG_SCROLLABLE);
 
     /* Initialize the menu view */
+    // The icon row: a flex row that scrolls horizontally and snaps each icon to
+    // the centre, so a swipe or encoder turn always lands on exactly one app.
     lv_obj_t *panel = lv_obj_create(menu_panel);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_size(panel, LV_PCT(100), LV_PCT(70));
@@ -581,6 +738,8 @@ void setupGui()
     lv_obj_add_event_cb(panel, scrollbar_change_cb, LV_EVENT_SCROLL_END, NULL);
 #endif
 
+    // Each app's `app_t` is defined in its own ui_*.cpp and declared here rather
+    // than in a shared header, which keeps the app list in one readable place.
     extern app_t ui_sys_main ;
     extern app_t ui_radio_main ;
     extern app_t ui_audio_main ;
@@ -599,6 +758,18 @@ void setupGui()
     extern app_t ui_factory_main;
 
     /* Add application */
+    // The launcher contents are built from the board's capabilities, so the same
+    // source produces a different app list per device. Three kinds of gate are
+    // used below:
+    //   - #if defined(USING_*)  -- the part is fitted on this board at all
+    //     (resolved by the per-board block in hal_interface.h);
+    //   - a runtime check such as hw_has_keyboard() -- the part is fitted but may
+    //     not have answered when probed;
+    //   - a toolchain version check, for apps that only build against certain
+    //     arduino-esp32 releases (see the Walkie app below).
+    // Unconditional create_app() calls are apps every board supports.
+    //
+    // Icon order here is the order they appear on the launcher.
 #if defined(USING_IR_REMOTE)
     extern app_t ui_ir_remote_main;
     create_app(panel, "IR Remote", &img_ir_remote, &ui_ir_remote_main);
@@ -657,6 +828,10 @@ void setupGui()
     create_app(panel, "LoRa", &img_radio, &ui_radio_main);
     create_app(panel, "LoRa Chat", &img_msgchat, &ui_msgchat_main);
 
+    // The walkie-talkie app needs both the Pager's codec hardware and an
+    // arduino-esp32 core of 3.0.0 or older -- its I2S usage does not compile
+    // against newer cores. It therefore disappears from the launcher if the core
+    // is upgraded, rather than breaking the build.
 #if (ESP_ARDUINO_VERSION <= ESP_ARDUINO_VERSION_VAL(3,0,0)) && defined(ARDUINO_T_LORA_PAGER)
     extern app_t ui_walkie_main;
     create_app(panel, "Walkie", &img_walkie, &ui_walkie_main);

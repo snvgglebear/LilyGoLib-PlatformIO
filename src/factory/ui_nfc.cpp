@@ -6,9 +6,24 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief NFC reader app -- present a tag and see what it contains.
+ *
+ * The UI half of the NFC feature; the protocol work is in app_nfc.cpp, and the
+ * decoded records reach the screen through the callbacks registered in
+ * hal_interface.cpp. Text and URI records raise a generic pop-up; Wi-Fi handoff
+ * records are handled here, offering to join the network the tag advertises.
+ *
+ * Only built when USING_ST25R3916 is defined -- the T-Watch-Ultra and
+ * T-LoRa-Pager. The on-screen instructions come from NFC_TIPS_STRING, which
+ * differs per board because the antenna is in a different place on each.
+ *
+ * Entering the app powers the RF field up and leaving it powers the field down;
+ * the field is a continuous battery drain, so that pairing matters.
+ */
 #include "ui_define.h"
 
-static lv_obj_t *msgbox = NULL;
+static lv_obj_t *msgbox = NULL;     ///< the "join this WiFi network?" dialog, or NULL
 static lv_obj_t *menu = NULL;
 static lv_obj_t *quit_btn = NULL;
 

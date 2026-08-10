@@ -6,34 +6,72 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief LoRa radio test app -- tune the radio and run a TX/RX loopback test.
+ *
+ * Presents every radio parameter as a settings row, then lets the user put the
+ * module into transmit or receive mode and watch packets flow. Two units running
+ * this app with matching settings (one in TX Mode, one in RX Mode) form the
+ * standard factory link test.
+ *
+ * The app is radio-agnostic: the frequency/bandwidth/power dropdowns are filled
+ * from the radio_get_*_list() functions of whichever hw_*.cpp back end was
+ * compiled in, so the same screen adapts to an SX1262, SX1280, LR1121 or CC1101.
+ *
+ * Settings are edited into `radio_params_copy` and only pushed to the hardware
+ * when the user presses the tick button -- so a half-finished configuration is
+ * never applied.
+ *
+ * @see ui_msgchat.cpp for the app that sends real messages over the same radio.
+ */
 #include "ui_define.h"
 
 
+// Dropdown captions, paired with the *_args_list arrays below. The two must stay
+// in the same order: the UI reports a selection index, which is used to look up
+// the real value.
 #define RADIO_INTERVAL_LIST     "100ms\n""200ms\n""500ms\n""1000ms\n""2000ms\n""3000ms"
 #define RADIO_MODE_LIST         "Disable\n""TX Mode\n""RX Mode\n""TxContinuousWave"
 #define RADIO_SF_LIST           "5\n""6\n""7\n""8\n""9\n""10\n""11\n""12"
 #define RADIO_CR_LIST           "5\n""6\n""7\n""8"
 
-static const uint16_t radio_interval_args_list[] = {100, 200, 500, 1000, 2000, 3000};
-static const uint8_t radio_sf_args_list[] = {5, 6, 7, 8, 9, 10, 11, 12};
-static const uint8_t radio_cr_args_list[] = {5, 6, 7, 8};
+static const uint16_t radio_interval_args_list[] = {100, 200, 500, 1000, 2000, 3000};   ///< ms between test transmissions
+static const uint8_t radio_sf_args_list[] = {5, 6, 7, 8, 9, 10, 11, 12};                ///< LoRa spreading factors
+static const uint8_t radio_cr_args_list[] = {5, 6, 7, 8};                               ///< coding rate denominators: 4/5 .. 4/8
 
+/// True once a frequency above 960 MHz is picked. On the dual-band LR1121 this
+/// swaps the bandwidth and power dropdowns to their 2.4 GHz option sets.
 static bool _high_freq = false;
+// Dropdowns kept as file statics because the frequency handler has to rewrite
+// the contents of the other two when the band changes.
 static lv_obj_t *bandwidth_dd = nullptr;
 static lv_obj_t *frequency_dd = nullptr;
 static lv_obj_t *power_level_dd = nullptr;
 static lv_obj_t *menu = NULL;
-static lv_obj_t *radio_msg_label = NULL;
+static lv_obj_t *radio_msg_label = NULL;    ///< status line showing TX/RX results
+/// Working copy of the settings, edited by the dropdowns and applied on OK.
 radio_params_t radio_params_copy;
 static uint8_t radio_run_mode = RADIO_DISABLE;
-static lv_timer_t *timer = NULL;
-static uint32_t dummy_tx_payload = 0;
-static uint32_t dummy_rx_payload = 0;
+static lv_timer_t *timer = NULL;            ///< drives radio_timer_task()
+static uint32_t dummy_tx_payload = 0;       ///< incrementing counter sent as the test payload
+static uint32_t dummy_rx_payload = 0;       ///< last counter value received
 
 static void ui_set_msg_label(const char *msg);
 
 static void radio_timer_task(lv_timer_t *t);
 
+/**
+ * Back-button handler and the app's real teardown.
+ *
+ * The menu widget fires this for every back button, including those of nested
+ * sub-pages, so the lv_menu_back_btn_is_root() test is what distinguishes
+ * "leave the app" from "go up one page".
+ *
+ * Leaving the app must stop the radio: without the RADIO_DISABLE below, the
+ * module would keep transmitting or listening in the background after the
+ * screen is gone, wasting power and holding the SPI bus. Note this cleanup lives
+ * here rather than in ui_radio_exit(), which is empty.
+ */
 static void back_event_handler(lv_event_t *e)
 {
     lv_obj_t *obj = (lv_obj_t *)lv_event_get_target(e);
@@ -56,6 +94,22 @@ static void back_event_handler(lv_event_t *e)
     }
 }
 
+/**
+ * Single event handler shared by every control on the screen.
+ *
+ * Which control fired is identified by a one-character tag passed as the event's
+ * user data ('f' = frequency, 'b' = the OK button, 'u' = RF switch, and so on) --
+ * each control registers a `static const char` whose address is handed to
+ * lv_obj_add_event_cb(). The tag must be static because LVGL stores the pointer,
+ * not the value.
+ *
+ * Most cases just write the new value into `radio_params_copy`; the 'b' (OK)
+ * case is what actually pushes the accumulated settings to the hardware.
+ *
+ * The frequency case additionally detects a band change (>960 MHz) and rewrites
+ * the bandwidth and power dropdowns, since a dual-band module offers different
+ * options in each band.
+ */
 static void _ui_radio_obj_event(lv_event_t *e)
 {
     uint16_t selected = 0;
@@ -404,6 +458,20 @@ lv_obj_t *create_syncword_textarea(lv_obj_t *parent)
     return ta;
 }
 
+/**
+ * The link test itself, run once per timer tick (default 1 s, adjustable via the
+ * "Tx Interval" dropdown).
+ *
+ * In TX mode it sends a 4-byte incrementing counter and bumps it on each
+ * successful send; in RX mode it polls for a packet and displays the received
+ * counter alongside the RSSI. Comparing the counter seen at the receiver against
+ * the one shown at the transmitter is how packet loss is judged.
+ *
+ * `dummy_tx_payload` is reset on entering RX mode so a subsequent TX run starts
+ * from zero again.
+ *
+ * Both param structs are `static` so the buffers they point at outlive the call.
+ */
 static void radio_timer_task(lv_timer_t *t)
 {
     static radio_tx_params_t tx_params;
@@ -456,9 +524,17 @@ static lv_obj_t *create_usb_rf_dropdown(lv_obj_t *parent)
 }
 #endif
 
+/**
+ * Build the radio screen. Called by the launcher when the app is opened.
+ *
+ * If the radio did not answer when probed at boot, the app degrades to a single
+ * "not detected" message rather than presenting controls that cannot work.
+ * Otherwise it lays out one ui_create_option() row per parameter, creates the
+ * (initially paused) test timer, and adds the back and OK buttons.
+ */
 void ui_radio_enter(lv_obj_t *parent)
 {
-    static const char flag = 'b';
+    static const char flag = 'b';   // tag identifying the OK button to the shared handler
 
     menu = create_menu(parent, back_event_handler);
     lv_obj_t *main_page = lv_menu_page_create(menu, NULL);
@@ -518,12 +594,15 @@ void ui_radio_enter(lv_obj_t *parent)
 }
 
 
+/// Intentionally empty: this app tears itself down in back_event_handler(),
+/// which is the only route out of the screen.
 void ui_radio_exit(lv_obj_t *parent)
 {
 
 }
 
 
+/// The app_t the launcher registers via create_app() in ui_main.cpp.
 app_t ui_radio_main = {
     .setup_func_cb = ui_radio_enter,
     .exit_func_cb = ui_radio_exit,

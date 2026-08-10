@@ -6,14 +6,27 @@
  * @date      2025-02-13
  *
  */
+/**
+ * @brief BLE keyboard app -- type into a paired computer or phone.
+ *
+ * Advertises the device as a Bluetooth HID keyboard and sends keystrokes to
+ * whatever host pairs with it. On the T-LoRa-Pager the physical keyboard is
+ * forwarded directly; the screen shows connection state and a demo string.
+ *
+ * Requires a host to complete pairing before anything is delivered, so the
+ * status indicator is the first thing to check when nothing appears to happen.
+ *
+ * @see hal_interface.cpp: hw_set_ble_kb_*() and the BleKeyboard object.
+ */
 #include "ui_define.h"
 
-static lv_timer_t *timer = NULL;
+static lv_timer_t *timer = NULL;    ///< polls the connection state
 
+/// Widgets updated by that timer.
 typedef struct {
     lv_obj_t *bar;
     lv_obj_t *label;
-    lv_obj_t *state;
+    lv_obj_t *state;    ///< "connected" / "waiting for pairing"
 } ble_kb_state_t;
 
 static ble_kb_state_t ble_kb_state;

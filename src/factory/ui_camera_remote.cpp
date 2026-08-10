@@ -6,11 +6,26 @@
  * @date      2025-01-05
  *
  */
+/**
+ * @brief Camera remote -- act as a BLE shutter release for a paired phone.
+ *
+ * The device advertises itself as a Bluetooth HID keyboard; pair it from the
+ * phone's Bluetooth settings, open the camera app, and the on-screen button
+ * fires the shutter.
+ *
+ * The trick is that it sends volume-up rather than any camera-specific code:
+ * both iOS and Android map the volume-up key to the shutter while the camera is
+ * open, which is exactly how commercial BLE shutter remotes work.
+ *
+ * @see hal_interface.cpp: hw_set_ble_key(), and media_key_value_t in hal_interface.h.
+ */
 #include "ui_define.h"
 
 
 static lv_obj_t *menu = NULL;
 
+/// HID key sent on each press. Volume-up is the de facto shutter key on both
+/// major mobile platforms.
 #define SHOOT_KEY       MEDIA_VOLUME_UP
 
 

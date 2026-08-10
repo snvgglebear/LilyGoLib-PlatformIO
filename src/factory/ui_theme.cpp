@@ -4,7 +4,30 @@
  * @license   MIT
  * @copyright Copyright (c) 2025  ShenZhen XinYuan Electronic Technology Co., Ltd
  * @date      2025-04-23
- * 
+ *
+ * @brief     App-wide LVGL theme extension.
+ *
+ * Rather than styling each widget at its creation site, this file installs a
+ * *theme extension*: LVGL's default dark theme is kept as the parent, and an
+ * apply callback runs afterwards on every object as it is created, adding a few
+ * extra styles by widget class.
+ *
+ * The reason this exists is focus visibility. On the T-LoRa-Pager there is no
+ * touchscreen -- the user navigates with an encoder and keyboard -- so it must
+ * always be obvious which widget currently has focus. The default theme's focus
+ * cue is too subtle against this app's black background, so LV_STATE_FOCUS_KEY
+ * (the "focused via keypad/encoder" state, as distinct from LV_STATE_FOCUSED)
+ * is given a heavier border on the widgets that matter: dropdowns, text areas,
+ * lists, and message-box buttons.
+ *
+ * Installed by theme_init(), called from setupGui() immediately after
+ * lv_theme_default_init().
+ *
+ * The file is split by LVGL major version because v9 renamed the display/theme
+ * accessors and reworked the message box; the intent of both halves is the same.
+ *
+ * @see https://docs.lvgl.io/master/details/common-widget-features/styles/index.html
+ * @see https://docs.lvgl.io/master/details/other-components/theme.html
  */
 
 #include <lvgl.h>
@@ -12,6 +35,13 @@
 
 /*Will be called when the styles of the base theme are already added
   to add new styles*/
+// Runs once per object created, after the parent theme has styled it. The
+// lv_obj_check_type() chain is how the callback discriminates widget types --
+// there is no per-class hook in LVGL's theme API.
+//
+// The `static` styles are intentional and required: lv_obj_add_style() stores a
+// pointer, so a stack-local style would dangle. They are re-initialised on every
+// call, which is redundant but harmless.
 static void new_theme_apply_cb(lv_theme_t * th, lv_obj_t * obj)
 {
     static lv_style_t dropdown_style;
@@ -54,6 +84,19 @@ static void new_theme_apply_cb(lv_theme_t * th, lv_obj_t * obj)
    
 }
 
+/**
+ * Install the theme extension on the default display.
+ *
+ * Copies the active theme, chains it as the new theme's parent, and attaches
+ * new_theme_apply_cb(). Chaining rather than replacing means the default dark
+ * theme still does all the base styling and this file only adds to it.
+ *
+ * `th_new` must be static -- LVGL keeps a pointer to it for the lifetime of the
+ * display.
+ *
+ * Must be called after lv_theme_default_init() and before any widget is created,
+ * since the callback only runs for objects created after it is installed.
+ */
 void theme_init()
 {
     /*Initialize the new theme from the current theme*/
