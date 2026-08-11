@@ -27,7 +27,25 @@
         "source=platformio-core,target=/home/vscode/.platformio,type=volume",
         "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind,consistency=cached",
-	 	"source=${localEnv:HOME}/GitHub/agentic-csa,target=/opt/agentic-csa,type=bind" 
+	 	"source=${localEnv:HOME}/GitHub/agentic-csa,target=/opt/agentic-csa,type=bind",
+        // Serial upload (`pio run -t upload`), Linux hosts only. Bind all of
+        // /dev rather than using "--device=...": esptool toggles DTR/RTS to
+        // drop the board into its ROM bootloader, and on an ESP32-S3 (native
+        // USB CDC) that re-enumerates the port mid-upload. A --device entry is
+        // a snapshot taken at container start, so the re-created node would
+        // never show up inside the container; a /dev bind tracks hotplug live.
+        "source=/dev,target=/dev,type=bind"
+    ],
+    "runArgs": [
+        // Permit opening USB-serial character devices:
+        //   166 = /dev/ttyACM*  (ESP32-S3 native USB — T-Watch-Ultra)
+        //   188 = /dev/ttyUSB*  (CH9102/CP210x USB-UART bridge — T-Watch-S3)
+        "--device-cgroup-rule=c 166:* rmw",
+        "--device-cgroup-rule=c 188:* rmw",
+        // The tty node is root:dialout 0660, and the kernel checks the numeric
+        // GID, not the name — so this must be the HOST's dialout GID (18 on
+        // Fedora, 20 on Debian/Ubuntu). Confirm with `getent group dialout`.
+        "--group-add=18"
     ],
     "containerEnv": {
         // Keep ALL Claude Code state (including what would otherwise live at

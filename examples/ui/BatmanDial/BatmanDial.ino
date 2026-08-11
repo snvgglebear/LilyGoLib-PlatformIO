@@ -64,15 +64,15 @@ static void refresh(lv_timer_t *t)
     RTC_DateTime now = instance.rtc.getDateTime();
 
     // Hour hand advances smoothly with the minutes, as a real movement does.
-    float hour_deg = ((now.hour % 12) + now.minute / 60.0f) * 30.0f;
-    float min_deg  = now.minute * 6.0f;
-    float sec_deg  = now.second * 6.0f;
+    float hour_deg = ((now.getHour() % 12) + now.getMinute() / 60.0f) * 30.0f;
+    float min_deg  = now.getMinute()* 6.0f;
+    float sec_deg  = now.getSecond() * 6.0f;
 
     set_hand(hand_hour, pts_hour, hour_deg, radius / 2);
     set_hand(hand_min,  pts_min,  min_deg,  (radius * 3) / 4);
     set_hand(hand_sec,  pts_sec,  sec_deg,  (radius * 9) / 10);
 
-    lv_label_set_text_fmt(label_digital, "%02u:%02u:%02u", now.hour, now.minute, now.second);
+    lv_label_set_text_fmt(label_digital, "%02u:%02u:%02u", now.getHour(), now.getMinute(), now.getSecond());
 }
 
 void setup()

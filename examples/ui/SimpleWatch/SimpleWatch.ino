@@ -42,12 +42,12 @@ static void build_face()
 
     // Font size is the one thing that genuinely differs between a 240px and a
     // 502px wide panel, so choose it from the actual resolution.
-    bool small = lv_display_get_horizontal_resolution(NULL) <= 320;
+    bool small = lv_display_get_horizontal_resolution(NULL) <= 400;
 
     label_time = lv_label_create(scr);
     lv_obj_set_style_text_color(label_time, lv_color_white(), 0);
     lv_obj_set_style_text_font(label_time,
-                               small ? &lv_font_montserrat_24 : &lv_font_montserrat_48, 0);
+                               small ? &lv_font_montserrat_48 : &lv_font_montserrat_48, 0);
     lv_label_set_text(label_time, "--:--");
 
     label_date = lv_label_create(scr);
@@ -57,7 +57,7 @@ static void build_face()
     lv_label_set_text(label_date, "");
 
     bar_batt = lv_bar_create(scr);
-    lv_obj_set_size(bar_batt, LV_PCT(50), small ? 8 : 14);
+    lv_obj_set_size(bar_batt, LV_PCT(50), small ? 12 : 20);
     lv_bar_set_range(bar_batt, 0, 100);
 
     label_batt = lv_label_create(scr);
@@ -73,9 +73,9 @@ static void refresh(lv_timer_t *t)
 
     RTC_DateTime now = instance.rtc.getDateTime();
 
-    lv_label_set_text_fmt(label_time, "%02u:%02u", now.hour, now.minute);
+    lv_label_set_text_fmt(label_time, "%02u:%02u", now.getHour(), now.getMinute());
     lv_label_set_text_fmt(label_date, "%s  %04u-%02u-%02u",
-                          weekday_name(now.week), now.year, now.month, now.day);
+                          weekday_name(now.getDay()), now.getYear(), now.getMonth(), now.getDay());
 
     int percent = instance.pmu.getBatteryPercent();
     if (percent < 0) percent = 0;
