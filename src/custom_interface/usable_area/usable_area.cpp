@@ -4,7 +4,7 @@
 static int32_t screen_w;
 static int32_t screen_h;
 
-void useable_area_init(void)
+void usable_area_init(void)
 {
     screen_w = lv_display_get_horizontal_resolution(NULL);
     screen_h = lv_display_get_vertical_resolution(NULL);

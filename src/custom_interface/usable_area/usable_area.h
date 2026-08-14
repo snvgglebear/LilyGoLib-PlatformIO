@@ -26,7 +26,7 @@
 
 /*Call once after beginLvglHelper(): reads the panel resolution and styles
   the screen root (background, clipping to the rounded shape).*/
-void safe_area_init(void);
+void usable_area_init(void);
 
 int32_t safe_area_screen_width(void);
 int32_t safe_area_screen_height(void);
