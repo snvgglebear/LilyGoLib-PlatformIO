@@ -4,9 +4,11 @@ The T-Watch-Ultra panel reports **410 × 502**, but the cover glass is curved:
 everything outside a corner radius of roughly **120 px** is hidden behind the
 bezel. Widgets placed near a corner are drawn correctly and simply never seen.
 
-This sketch makes that boundary visible and gives you two ways to lay out
-inside it — a fixed safe rectangle, and per-band insets that reclaim the space
-the fixed rectangle wastes.
+`safe_area.h`/`safe_area.cpp` is a small reusable engine for laying out inside
+that boundary — a fixed safe rectangle, and per-band insets that reclaim the
+space the fixed rectangle wastes. `safe_area.ino` is a harness sketch that
+exercises it. See [`HOWTO.md`](HOWTO.md) for how to place your own widgets
+through the engine.
 
 ## Build
 
@@ -68,18 +70,18 @@ At r = 120 that is **36 px**, giving a **338 × 430** safe area:
 #define SAFE_INSET ((int32_t)(BEZEL_RADIUS * 0.29289322f) + 1)
 ```
 
-`safe_area_create()` returns a container covering it. Parent your widgets to
-that and the corners stop being a concern. This is the one to reach for first —
-it is provably safe, not a guess, and costs one container.
+`safe_area_rect(parent)` returns a container covering it. Parent your widgets
+to that and the corners stop being a concern. This is the one to reach for
+first — it is provably safe, not a guess, and costs one container.
 
 ### 2. Per-band insets
 
 A uniform 36 px inset wastes real estate in the vertical middle, where the full
-410 px genuinely *is* visible. `bezel_inset_at()` returns the inset actually
-required at a given vertical offset:
+410 px genuinely *is* visible. `safe_area_inset_at()` returns the inset
+actually required at a given vertical offset:
 
 ```c
-static int32_t bezel_inset_at(int32_t y);
+int32_t safe_area_inset_at(int32_t y);
 ```
 
 | y | inset |
@@ -95,17 +97,23 @@ Between y = 120 and y = 382 it returns 0, so rows there use the full width —
 72 px more than the fixed rectangle offers. Useful for lists where each row
 sizes itself, or for anything meant to follow the curve.
 
-**Use `bezel_inset_for_band()`, not `bezel_inset_at()`, for anything with
-height.** A widget's top and bottom edges sit at different depths in the arc,
-and the binding constraint is whichever is worse:
+**Use `safe_area_inset_for_band()`, not `safe_area_inset_at()`, for anything
+with height.** A widget's top and bottom edges sit at different depths in the
+arc, and the binding constraint is whichever is worse:
 
 ```c
-static int32_t bezel_inset_for_band(int32_t y_top, int32_t y_bot);
+int32_t safe_area_inset_for_band(int32_t y_top, int32_t y_bot);
 ```
 
 Passing only one edge lets the other corner poke into the bezel.
+`safe_area_place(parent, y, height)` wraps this — it builds the band's
+container directly instead of just returning the inset. See
+[`HOWTO.md`](HOWTO.md) for placing real widgets with it.
 
 ## Clipping as a safety net
+
+`safe_area_init()` applies this to the screen root, once, before any widgets
+are created:
 
 ```c
 lv_obj_set_style_radius(root, BEZEL_RADIUS, 0);
@@ -139,10 +147,13 @@ This lives in its own directory rather than beside `src/testing/testing.ino`
 because PlatformIO merges **every** `.ino` under `src_dir` — recursively — into
 a single translation unit (`InoToCPPConverter.merge()`). Two sketches in one
 tree collide on `setup()`/`loop()`. Rename the folder freely; just keep one
-sketch per `src_dir`.
+sketch per `src_dir`. `safe_area.h`/`safe_area.cpp` are ordinary sources, not
+sketches, so they don't count against that limit — that's why the engine is
+split out from `safe_area.ino` rather than living inside it.
 
 ## Reference
 
+- [`HOWTO.md`](HOWTO.md) — placing your own widgets through the engine
 - [LVGL docs](https://lvgl.io/docs/open) — `lv_obj_set_style_clip_corner`,
   `LV_OBJ_FLAG_ADV_HITTEST`
 - [`src/testing/testing.ino`](../testing/testing.ino) — the canvas experiment
