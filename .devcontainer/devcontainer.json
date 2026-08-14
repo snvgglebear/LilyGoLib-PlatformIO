@@ -16,8 +16,27 @@
                 // Pointing it at the pip-installed core instead
                 // (useBuiltinPIOCore: false) fails the extension's
                 // compatibility check on activation.
-                "platformio-ide.useBuiltinPIOCore": true
+                "platformio-ide.useBuiltinPIOCore": true,
+                // The PIO Home tab is a webview whose <iframe> src is
+                // hardcoded to http://127.0.0.1:<port> — that address is
+                // resolved from the client machine, not the container, and
+                // this extension version doesn't rewrite it for remote
+                // contexts. Left at its default the port is also random
+                // per-launch (0 = pick one in 45000-45999), so it can't be
+                // forwarded reliably. Pinning it lets "forwardPorts" below
+                // tunnel the same port every time.
+                "platformio-ide.pioHomeServerHttpPort": 8008
             }
+        }
+    },
+    // Matches platformio-ide.pioHomeServerHttpPort above, so the PIO Home
+    // tab's iframe (which always targets 127.0.0.1 on the client) reaches
+    // the container's PIO Home server through this tunnel.
+    "forwardPorts": [8008],
+    "portsAttributes": {
+        "8008": {
+            "label": "PlatformIO Home",
+            "onAutoForward": "silent"
         }
     },
     // Persistent homes across container rebuilds:
@@ -55,18 +74,18 @@
     // Named volumes are created root-owned on first use; hand them to the
     // container user before PlatformIO / Claude Code try to write to them.
     "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.platformio /home/vscode/.claude && pio pkg update",
-    "remoteUser": "vscode"
+    "remoteUser": "vscode",
 
     // Flashing a board over USB (`pio run -t upload`) or running an
     // emulator_* target with a display requires extra host access that
     // varies by platform, so it's left commented out rather than assumed:
     //
     // USB passthrough (Linux hosts only):
-    // "runArgs": ["--device=/dev/bus/usb"],
+    //"runArgs": ["--device=/dev/bus/usb"],
     //
     // X11 forwarding, to view the SDL2 emulator window (Linux hosts only,
     // run `xhost +local:` on the host first): add this bind to "mounts"
     // above and DISPLAY to "containerEnv":
-    // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
-    // "DISPLAY": "${localEnv:DISPLAY}"
+    //"source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
+    //"DISPLAY": "${localEnv:DISPLAY}"
 }

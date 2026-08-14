@@ -7,6 +7,9 @@
 #define CANVAS_HEIGHT  502
 #define spacing 0
 
+// How long the screen stays on with no activity before it sleeps.
+#define SCREEN_SLEEP_TIMEOUT_MS  10000
+
 /**
  * @title Rectangle with border and outline
  * @brief Draw a red rounded rectangle with a blue border and a green outline onto a canvas.
@@ -18,23 +21,10 @@
  * on a layer opened with `lv_canvas_init_layer`.
  */
 
-RTC_DATA_ATTR int bootCount = 0;
-
-bool  power_button_clicked = false;
+bool power_button_clicked = false;
+bool screen_asleep = false;
+uint32_t last_activity_ms = 0;
 lv_obj_t *label1;
-
-
-const char *get_wakeup_reason()
-{
-    switch (esp_sleep_get_wakeup_cause()) {
-    case ESP_SLEEP_WAKEUP_EXT0 : return ("Wakeup caused by external signal using RTC_IO");
-    case ESP_SLEEP_WAKEUP_EXT1 : return ("Wakeup caused by external signal using RTC_CNTL");
-    case ESP_SLEEP_WAKEUP_TIMER : return ("Wakeup caused by timer");
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : return ("Wakeup caused by touchpad");
-    case ESP_SLEEP_WAKEUP_ULP : return ("Wakeup caused by ULP program");
-    default : return ("Wakeup was not caused");
-    }
-}
 
 void lv_example_canvas_rectangle(void)
 {
@@ -79,6 +69,7 @@ void lv_example_canvas_rectangle(void)
 
     lv_canvas_finish_layer(canvas, &layer);
 }
+
 void setup()
 {
     Serial.begin(115200);
@@ -90,43 +81,51 @@ void setup()
     instance.setBrightness(DEVICE_MAX_BRIGHTNESS_LEVEL);
 
     lv_example_canvas_rectangle();
+
+    label1 = lv_label_create(lv_screen_active());
+    lv_label_set_long_mode(label1, LV_LABEL_LONG_SCROLL);
+    lv_obj_set_width(label1, LV_PCT(90));
+    lv_label_set_text(label1, "Awake");
+    lv_obj_align(label1, LV_ALIGN_TOP_MID, 0, 10);
+
     lv_task_handler();
+
     instance.onEvent([](DeviceEvent_t event, void *params, void * user_data) {
         if (instance.getPMUEventType(params) == PMU_EVENT_KEY_CLICKED) {
             power_button_clicked = true;
         }
     }, POWER_EVENT, NULL);
 
-    // Waiting to press the crown to go to sleep
-    while (!power_button_clicked) {
-        // Handle device event
-        instance.loop();
-        // Handle lvgl event
-        lv_task_handler();
-        delay(5);
-    }
-
-    for (int i = 5; i > 0; i--) {
-        lv_label_set_text_fmt(label1, "Go to sleep after %d seconds", i);
-        lv_task_handler();
-        delay(1000);
-    }
-
-    lv_label_set_text(label1, "Sleep now ...");
-    lv_task_handler();
-    delay(1000);
-
-    /*
-    * Wake up by touch panel
-    * T-Watch-S3 deep sleep is about 1.08 mA
-    * T-Watch-S3-Ultra deep sleep is about 3.34 mA
-    * * */
-    instance.sleep(WAKEUP_SRC_TOUCH_PANEL);
-    lv_task_handler();
+    last_activity_ms = millis();
 }
+
 void loop()
 {
-    // lv_task_handler();
-    // delay(5);
+    instance.loop();
+
+    bool touched = instance.getTouched();
+
+    if (power_button_clicked || touched) {
+        power_button_clicked = false;
+
+        if (screen_asleep) {
+            instance.wakeupDisplay();
+            screen_asleep = false;
+            lv_label_set_text(label1, touched ? "Awake (woken by touch)" : "Awake (woken by power button)");
+        }
+
+        last_activity_ms = millis();
+    }
+
+    if (!screen_asleep && (millis() - last_activity_ms >= SCREEN_SLEEP_TIMEOUT_MS)) {
+        lv_label_set_text(label1, "Sleeping (timeout) - touch screen or click power button to wake");
+        lv_task_handler();
+
+        instance.sleepDisplay();
+        screen_asleep = true;
+    }
+
+    lv_task_handler();
+    delay(5);
 }
 #endif
