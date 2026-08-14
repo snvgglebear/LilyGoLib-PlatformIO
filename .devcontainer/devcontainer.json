@@ -16,8 +16,27 @@
                 // Pointing it at the pip-installed core instead
                 // (useBuiltinPIOCore: false) fails the extension's
                 // compatibility check on activation.
-                "platformio-ide.useBuiltinPIOCore": true
+                "platformio-ide.useBuiltinPIOCore": true,
+                // The PIO Home tab is a webview whose <iframe> src is
+                // hardcoded to http://127.0.0.1:<port> — that address is
+                // resolved from the client machine, not the container, and
+                // this extension version doesn't rewrite it for remote
+                // contexts. Left at its default the port is also random
+                // per-launch (0 = pick one in 45000-45999), so it can't be
+                // forwarded reliably. Pinning it lets "forwardPorts" below
+                // tunnel the same port every time.
+                "platformio-ide.pioHomeServerHttpPort": 8008
             }
+        }
+    },
+    // Matches platformio-ide.pioHomeServerHttpPort above, so the PIO Home
+    // tab's iframe (which always targets 127.0.0.1 on the client) reaches
+    // the container's PIO Home server through this tunnel.
+    "forwardPorts": [8008],
+    "portsAttributes": {
+        "8008": {
+            "label": "PlatformIO Home",
+            "onAutoForward": "silent"
         }
     },
     // Persistent homes across container rebuilds:
@@ -27,7 +46,25 @@
         "source=platformio-core,target=/home/vscode/.platformio,type=volume",
         "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
 		"source=${localEnv:HOME}/.claude.json,target=/home/vscode/.claude.json,type=bind,consistency=cached",
-	 	"source=${localEnv:HOME}/GitHub/agentic-csa,target=/opt/agentic-csa,type=bind" 
+	 	"source=${localEnv:HOME}/GitHub/agentic-csa,target=/opt/agentic-csa,type=bind",
+        // Serial upload (`pio run -t upload`), Linux hosts only. Bind all of
+        // /dev rather than using "--device=...": esptool toggles DTR/RTS to
+        // drop the board into its ROM bootloader, and on an ESP32-S3 (native
+        // USB CDC) that re-enumerates the port mid-upload. A --device entry is
+        // a snapshot taken at container start, so the re-created node would
+        // never show up inside the container; a /dev bind tracks hotplug live.
+        "source=/dev,target=/dev,type=bind"
+    ],
+    "runArgs": [
+        // Permit opening USB-serial character devices:
+        //   166 = /dev/ttyACM*  (ESP32-S3 native USB — T-Watch-Ultra)
+        //   188 = /dev/ttyUSB*  (CH9102/CP210x USB-UART bridge — T-Watch-S3)
+        "--device-cgroup-rule=c 166:* rmw",
+        "--device-cgroup-rule=c 188:* rmw",
+        // The tty node is root:dialout 0660, and the kernel checks the numeric
+        // GID, not the name — so this must be the HOST's dialout GID (18 on
+        // Fedora, 20 on Debian/Ubuntu). Confirm with `getent group dialout`.
+        "--group-add=18"
     ],
     "containerEnv": {
         // Keep ALL Claude Code state (including what would otherwise live at
@@ -37,18 +74,18 @@
     // Named volumes are created root-owned on first use; hand them to the
     // container user before PlatformIO / Claude Code try to write to them.
     "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.platformio /home/vscode/.claude && pio pkg update",
-    "remoteUser": "vscode"
+    "remoteUser": "vscode",
 
     // Flashing a board over USB (`pio run -t upload`) or running an
     // emulator_* target with a display requires extra host access that
     // varies by platform, so it's left commented out rather than assumed:
     //
     // USB passthrough (Linux hosts only):
-    // "runArgs": ["--device=/dev/bus/usb"],
+    //"runArgs": ["--device=/dev/bus/usb"],
     //
     // X11 forwarding, to view the SDL2 emulator window (Linux hosts only,
     // run `xhost +local:` on the host first): add this bind to "mounts"
     // above and DISPLAY to "containerEnv":
-    // "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
-    // "DISPLAY": "${localEnv:DISPLAY}"
+    //"source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
+    //"DISPLAY": "${localEnv:DISPLAY}"
 }

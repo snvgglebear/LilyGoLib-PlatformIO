@@ -63,6 +63,20 @@ Both paths converge on the same `hw_init()` (hardware/peripheral bring-up) and `
 - `audio/`, `images/`, `src/` — audio assets/codec glue, LVGL image assets (`LV_IMG_DECLARE`d in `ui_main.cpp`), and other generated/support sources for the app.
 - `partitions.csv` — flash partition table used by all three hardware envs (`board_build.partitions` in `platformio.ini`).
 
+### `src/gadgetbridge` app structure
+
+The watch side of `.claude/twatch-ultra-ble-protocol.md` — a companion firmware that pairs with Gadgetbridge's `TWATCH_ULTRA` device support (notifications, calls, music, weather, alarms, find-device, battery). Select it with `src_dir = src/gadgetbridge`. Layered, with `gb_link.h` as the seam between the app and its transport:
+
+- `gb_protocol.*` — newline framing and the JSON codec for the protocol's §5/§6 messages. No board, BLE or LVGL dependency, so it compiles for both hardware and emulator.
+- `gb_ble.cpp` (Arduino) / `gb_link_stdio.cpp` (native) — the two `gb_link.h` implementations: a NimBLE GATT server (Nordic UART Service + Device Information + Battery Service), and stdin/stdout standing in for the phone so the protocol can be driven from a terminal in an `emulator_*` env.
+- `gb_app.*` — watch-side state and behaviour (`GbApp`, the one instance); implements `GbProtocolHandler` and sends the watch→phone messages. Notifies the UI through a listener callback rather than calling into it.
+- `gb_messages.*` — classifies `notify` messages as SMS/chat vs ordinary alerts and threads them into conversations; message-like notifications go here instead of `GbApp`'s notification list, so the Chats and Alerts screens never show the same thing twice.
+- `gb_ui.*` — the LVGL screens; talks only to LVGL and `GbApp` accessors.
+- `gb_platform.*` — clock, battery and haptics, with the per-board (`USING_PMU_MANAGE` / `USING_BQ_GAUGE`) and native-stub branches confined here.
+- `gadgetbridge.ino` / `main.cpp` — Arduino and native/SDL2 entry points, same split as `src/factory`.
+
+NimBLE callbacks run on the host task: writes are reassembled into lines there and queued; parsing, app state and LVGL all happen in `loop()` via `gb_app.poll()`. See `src/gadgetbridge/README.md` for pairing, the emulator test harness, and the `GB_*` build-flag knobs, and `src/gadgetbridge/android-sms-notifications-plan.md` for the corresponding work in the Gadgetbridge fork.
+
 ### Radio/feature selection via build flags
 
 `env_arduino`'s `build_flags` in `platformio.ini` both select the physical LoRa module (`ARDUINO_LILYGO_LORA_SX1262`, `_CC1101`, `_SX1280`, `_LR1121`, `_SI4432` — exactly one uncommented) and exclude unused protocols from RadioLib (`RADIOLIB_EXCLUDE_*`) to keep firmware size down. Each board env additionally defines its own `ARDUINO_T_*` board-identity macro and adds its `variants/lilygo_*` include path.
@@ -73,10 +87,11 @@ Both paths converge on the same `hw_init()` (hardware/peripheral bring-up) and `
 
 ## Third-party dependencies
 
-Most libraries (LilyGoLib, LVGL, RadioLib, XPowersLib, SensorLib, etc.) are pulled via `lib_deps` in `platformio.ini` into `.pio/libdeps/<env>/` — not vendored in this repo. `lib/libhelix-mp3` is the one vendored exception (MP3 decode, used by the audio app).
+Most libraries (LilyGoLib, LVGL, RadioLib, XPowersLib, SensorLib, NimBLE-Arduino, ArduinoJson, etc.) are pulled via `lib_deps` in `platformio.ini` into `.pio/libdeps/<env>/` — not vendored in this repo. `lib/libhelix-mp3` is the one vendored exception (MP3 decode, used by the audio app).
 
 ## Reference material
 
 - [LilyGoLib](https://github.com/Xinyuan-LilyGO/LilyGoLib) — the board support library this app is built on (`instance`, `hw_init`, board examples referenced by the commented-out `src_dir` options).
 - [LVGL docs](https://lvgl.io/docs/open) and [lvgl/lvgl](https://github.com/lvgl/lvgl) — the UI toolkit used throughout `ui_*.cpp`.
 - [PlatoformIO docs](https://docs.platformio.org/en/latest/) — the build system and IDE used to build/upload/monitor this project.
+- [My fork of GadgetBridge] (https://codeberg.org/snvgglebear/Gadgetbridge) — the Android companion app for T-Watch-Ultra and T-Watch-S3. 
