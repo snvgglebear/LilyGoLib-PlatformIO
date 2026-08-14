@@ -100,18 +100,28 @@ void setup()
     }, POWER_EVENT, NULL);
 }
 void ManageSleepState() {
-bool touched = instance.getTouched();
+    bool touched = instance.getTouched();
 
-    if (power_button_clicked || touched) {
+    if (power_button_clicked) {
         power_button_clicked = false;
 
         if (screen_asleep) {
             instance.wakeupDisplay();
             screen_asleep = false;
-            //lv_label_set_text(label1, touched ? "Awake (woken by touch)" : "Awake (woken by power button)");
         } else {
             instance.sleepDisplay();
             screen_asleep = true;
+        }
+
+        last_activity_ms = millis();
+    } else if (touched) {
+        /*Touch only wakes a sleeping screen / resets the idle timer - it must
+          never put an already-awake screen to sleep, since a normal tap stays
+          "touched" across many loop() iterations and would otherwise spam
+          sleepDisplay()/wakeupDisplay() for the whole gesture.*/
+        if (screen_asleep) {
+            instance.wakeupDisplay();
+            screen_asleep = false;
         }
 
         last_activity_ms = millis();
