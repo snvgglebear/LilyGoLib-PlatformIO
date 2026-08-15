@@ -103,20 +103,20 @@ lv_obj_t *ui_clock_digital_create(lv_obj_t *parent)
     lv_obj_align(seg, LV_ALIGN_CENTER, 0, -10 + y_offset);
     lv_obj_set_style_text_font(seg, font, LV_PART_MAIN);
     lv_label_set_text(seg, ":");
-    lv_obj_set_style_text_color(seg, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(seg, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
     ctx->seg = seg;
 
     lv_obj_t *hour = lv_label_create(hour_cont);
     lv_obj_set_style_text_font(hour, font, LV_PART_MAIN);
     lv_label_set_text(hour, "12");
-    lv_obj_set_style_text_color(hour, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(hour, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
     lv_obj_center(hour);
     ctx->hour = hour;
 
     lv_obj_t *minute = lv_label_create(min_cont);
     lv_obj_set_style_text_font(minute, font, LV_PART_MAIN);
     lv_label_set_text(minute, "00");
-    lv_obj_set_style_text_color(minute, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(minute, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
     lv_obj_center(minute);
     ctx->minute = minute;
 
@@ -128,7 +128,7 @@ lv_obj_t *ui_clock_digital_create(lv_obj_t *parent)
     lv_obj_t *date = lv_label_create(page);
     lv_obj_set_style_text_font(date, &font_alibaba_24, LV_PART_MAIN);
     lv_label_set_text(date, "01-01 Thur");
-    lv_obj_set_style_text_color(date, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
+    lv_obj_set_style_text_color(date, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
     lv_obj_align(date, LV_ALIGN_BOTTOM_MID, 0, offset);
     ctx->date = date;
 

@@ -2,6 +2,12 @@
 1. settings panel.
     - allow the user to configure the interface settings, including notification display time, vibration settings, and clock display options.
     - panel should be a scrollable list of settings, with each setting having a toggle or input field as appropriate.
+# interface bugfixes
+- digital clock is smushed together (Use the one from the factory example, and make sure it is properly spaced and aligned.)
+- update the build so that the clockface it its own screen, and the home screen is accessed by either a swipe up/down or a button press ( per the plan src/new_interface/plans/boot-button-input-plan.md)
+- pressing power button does turn on/off the home screen. (look at custom_interface for reference.)
+- add a double press of the power button to bring up power menu.
+- increase the contrast of  the clockface and all the app tiles. They are too dark at the moment. 
 # Interface functionality.
 - Phone notifications as "popups" on the screen, with a timeout and a callback function.
 - lora/meshtastic functionality (primarily managing the connection from the phone, but also supporting a bluetooth keyboard.)

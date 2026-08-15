@@ -467,7 +467,7 @@ void setupGui()
 
     const lv_font_t  *main_font = MAIN_FONT;
     lv_theme_default_init(NULL, THEME_COLOR_PRIMARY, THEME_COLOR_SECONDARY,
-                          LV_THEME_DEFAULT_DARK, main_font);
+                          THEME_USE_DARK_MODE, main_font);
 
     theme_init();
 

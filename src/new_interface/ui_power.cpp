@@ -92,7 +92,7 @@ void ui_power_enter(lv_obj_t *parent)
     } else {
         lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
     }
-    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_LIGHT, 0);
+    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_DARK, 0);
     lv_obj_set_width(label, lv_pct(90));
     lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 20);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);

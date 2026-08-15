@@ -33,6 +33,19 @@
 #define THEME_COLOR_PRIMARY                THEME_COLOR_BLACK
 #define THEME_COLOR_SECONDARY              lv_palette_darken(LV_PALETTE_GREY, 3)
 
+/// Whether lv_theme_default_init() runs LVGL's default theme in dark mode.
+/// This is a deliberate `true`, NOT LVGL's own LV_THEME_DEFAULT_DARK config
+/// macro -- that macro controls whether LVGL's bundled demos default to dark
+/// mode, and LilyGoLib's shipped lv_conf.h (the only lv_conf.h in this
+/// build's include path) hardcodes it to 0. Passing that macro through here
+/// used to silently put every default-themed container (lv_obj_create(),
+/// lv_list, parts of lv_menu) into LIGHT mode -- white/near-white
+/// backgrounds with dark-grey text -- while the rest of this app assumes a
+/// black background with white/light foreground elements throughout. Every
+/// THEME_COLOR_TEXT_ON_DARK / THEME_COLOR_BG_DARK usage above depends on
+/// this actually being dark.
+#define THEME_USE_DARK_MODE                true
+
 // Text
 #define THEME_COLOR_TEXT_ON_DARK           THEME_COLOR_WHITE     ///< default text on this app's near-black screens
 #define THEME_COLOR_TEXT_ON_LIGHT          THEME_COLOR_BLACK     ///< text on light/white cards (walkie, chat, clock, all-apps list)
@@ -46,26 +59,26 @@
 // Backgrounds
 #define THEME_COLOR_BG_DARK                THEME_COLOR_BLACK       ///< screen / dialog / menu backgrounds
 #define THEME_COLOR_BG_LIGHT               THEME_COLOR_WHITE       ///< light "card" backgrounds (walkie, chat bar, toast buttons)
-#define THEME_COLOR_BG_PANEL                lv_color_hex(0x1a1a1a)  ///< dark meter/level panel fill (microphone)
-#define THEME_COLOR_BG_DIAL                 lv_color_hex(0x101010)  ///< analog clock dial fill
-#define THEME_COLOR_BG_TOAST               lv_color_hex(0x202020)  ///< notification toast
-#define THEME_COLOR_BG_CHIP_DARK           lv_color_hex(0x2A2A2A)  ///< walkie's neutral dark chip/button fill (and its inactive states)
+#define THEME_COLOR_BG_PANEL                lv_color_hex(0x1a1a1a)  ///< near-black; dark meter/level panel fill (microphone)
+#define THEME_COLOR_BG_DIAL                 lv_color_hex(0x101010)  ///< almost black; analog clock dial fill
+#define THEME_COLOR_BG_TOAST               lv_color_hex(0x202020)  ///< very dark grey; notification toast
+#define THEME_COLOR_BG_CHIP_DARK           lv_color_hex(0x2A2A2A)  ///< charcoal; walkie's neutral dark chip/button fill (and its inactive states)
 
 // Borders
-#define THEME_COLOR_BORDER_LIGHT           lv_color_hex(0xDDDDDD)               ///< walkie contact-list panel border
+#define THEME_COLOR_BORDER_LIGHT           lv_color_hex(0xDDDDDD)               ///< pale grey; walkie contact-list panel border
 #define THEME_COLOR_BORDER_NEUTRAL         lv_palette_main(LV_PALETTE_GREY)     ///< dropdown default border
 
 // Accents
-#define THEME_COLOR_ACCENT_RED             lv_color_hex(0xCC3333)               ///< walkie talking/recording indicator
-#define THEME_COLOR_ACCENT_GREEN           lv_color_hex(0x33AA33)               ///< walkie connected-peer indicator
+#define THEME_COLOR_ACCENT_RED             lv_color_hex(0xCC3333)               ///< brick red; walkie talking/recording indicator
+#define THEME_COLOR_ACCENT_GREEN           lv_color_hex(0x33AA33)               ///< medium green; walkie connected-peer indicator
 #define THEME_COLOR_ACCENT_BLUE            lv_palette_main(LV_PALETTE_BLUE)     ///< textarea focus outline, alarm tab active state
 #define THEME_COLOR_ACCENT_YELLOW          lv_palette_main(LV_PALETTE_YELLOW)   ///< analog clock second hand + dial border
 #define THEME_COLOR_ACCENT_PURPLE          lv_palette_main(LV_PALETTE_PURPLE)   ///< menu page border
 #define THEME_COLOR_ALERT                  lv_palette_main(LV_PALETTE_RED)      ///< sensor motion LED
 
 // Chat bubbles (ui_msgchat.cpp)
-#define THEME_COLOR_CHAT_BUBBLE_SENT       lv_color_hex(0x99ccff)
-#define THEME_COLOR_CHAT_BUBBLE_RECEIVED   lv_color_hex(0xe6e6e6)
+#define THEME_COLOR_CHAT_BUBBLE_SENT       lv_color_hex(0x99ccff)               ///< sky blue
+#define THEME_COLOR_CHAT_BUBBLE_RECEIVED   lv_color_hex(0xe6e6e6)               ///< off-white / pale grey
 
 // Process-bar gradient (ui_tools.cpp's ui_create_process_bar())
 #define THEME_COLOR_PROGRESS_GRADIENT_START   lv_palette_lighten(LV_PALETTE_GREY, 1)

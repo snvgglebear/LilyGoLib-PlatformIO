@@ -124,7 +124,7 @@ void ui_nfc_enter(lv_obj_t *parent)
 
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_LIGHT, 0);
+    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_DARK, 0);
 
     lv_obj_align_to(label, image, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
 

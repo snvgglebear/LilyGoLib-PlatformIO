@@ -55,7 +55,7 @@ void ui_all_apps_enter(lv_obj_t *parent)
 
     for (size_t i = 0; i < count; i++) {
         lv_obj_t *btn = lv_list_add_btn(list1, apps[i].icon, apps[i].name);
-        lv_obj_set_style_text_color(btn, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
+        lv_obj_set_style_text_color(btn, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
         lv_obj_add_event_cb(btn, app_row_click_cb, LV_EVENT_CLICKED, apps[i].app);
     }
 

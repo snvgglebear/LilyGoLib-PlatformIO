@@ -156,7 +156,7 @@ void ui_audio_enter(lv_obj_t *parent)
         lv_obj_align(img, LV_ALIGN_TOP_MID, 0, lv_pct(10));
 
         lv_obj_t *label = lv_label_create(cont);
-        lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
+        lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
         lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL);
         lv_obj_set_width(label, LV_PCT(80));
 
