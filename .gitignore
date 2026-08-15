@@ -1,4 +1,4 @@
 .pio
 .vscode
 build
-src/custom_interface/main.ino.cpp
+*.ino.cpp

@@ -31,6 +31,7 @@
  */
 
 #include <lvgl.h>
+#include "app_config.h"
 #if LVGL_VERSION_MAJOR == 9
 
 /*Will be called when the styles of the base theme are already added
@@ -46,12 +47,12 @@ static void new_theme_apply_cb(lv_theme_t * th, lv_obj_t * obj)
 {
     static lv_style_t dropdown_style;
     lv_style_init(&dropdown_style);
-    lv_style_set_border_color(&dropdown_style, lv_palette_main(LV_PALETTE_GREY));
+    lv_style_set_border_color(&dropdown_style, THEME_COLOR_BORDER_NEUTRAL);
     lv_style_set_border_width(&dropdown_style, 1);
 
     static lv_style_t dropdown_focus_style;
     lv_style_init(&dropdown_focus_style);
-    lv_style_set_border_color(&dropdown_focus_style, lv_color_black());
+    lv_style_set_border_color(&dropdown_focus_style, THEME_COLOR_BLACK);
     lv_style_set_border_width(&dropdown_focus_style, 2);
 
 
@@ -62,10 +63,10 @@ static void new_theme_apply_cb(lv_theme_t * th, lv_obj_t * obj)
     if (lv_obj_check_type(obj, &lv_dropdown_class)) {
         static lv_style_t dropdown_focus_key_style;
         lv_style_init(&dropdown_focus_key_style);
-        lv_style_set_border_color(&dropdown_focus_key_style, lv_color_black());
+        lv_style_set_border_color(&dropdown_focus_key_style, THEME_COLOR_BLACK);
         lv_style_set_border_width(&dropdown_focus_key_style, 2);
-        lv_style_set_bg_color(&dropdown_focus_key_style, lv_color_black());
-        lv_style_set_text_color(&dropdown_focus_key_style, lv_color_white());
+        lv_style_set_bg_color(&dropdown_focus_key_style, THEME_COLOR_BLACK);
+        lv_style_set_text_color(&dropdown_focus_key_style, THEME_COLOR_TEXT_ON_DARK);
 
         lv_obj_add_style(obj, &dropdown_style, LV_PART_MAIN );
         lv_obj_add_style(obj, &dropdown_style, LV_STATE_DEFAULT);
@@ -126,13 +127,13 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
 
     static lv_style_t btn_style;
     lv_style_init(&btn_style);
-    lv_style_set_border_color(&btn_style, lv_color_black());
+    lv_style_set_border_color(&btn_style, THEME_COLOR_BLACK);
     lv_style_set_border_width(&btn_style, 1);
-    lv_style_set_bg_color(&btn_style, lv_color_black());
+    lv_style_set_bg_color(&btn_style, THEME_COLOR_BLACK);
 
     static lv_style_t btn_focus_style;
     lv_style_init(&btn_focus_style);
-    lv_style_set_border_color(&btn_focus_style, lv_color_black());
+    lv_style_set_border_color(&btn_focus_style, THEME_COLOR_BLACK);
     lv_style_set_border_width(&btn_focus_style, 2);
 
     if (lv_obj_check_type(obj, &lv_label_class)) {
@@ -154,15 +155,15 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
 
         static lv_style_t msgbox_bg;
         lv_style_init(&msgbox_bg);
-        lv_style_set_border_color(&msgbox_bg, lv_color_black());
+        lv_style_set_border_color(&msgbox_bg, THEME_COLOR_BLACK);
         lv_style_set_border_width(&msgbox_bg, 2);
         lv_obj_add_style(obj, &msgbox_bg, 0);
 
 
         static lv_style_t bg_color_primary;
         lv_style_init(&bg_color_primary);
-        lv_style_set_bg_color(&bg_color_primary, lv_color_black());
-        lv_style_set_text_color(&bg_color_primary, lv_color_white());
+        lv_style_set_bg_color(&bg_color_primary, THEME_COLOR_BLACK);
+        lv_style_set_text_color(&bg_color_primary, THEME_COLOR_TEXT_ON_DARK);
         lv_style_set_bg_opa(&bg_color_primary, LV_OPA_80);
         lv_obj_add_style(obj, &bg_color_primary, LV_STATE_FOCUS_KEY);
         lv_obj_add_style(obj, &bg_color_primary, LV_STATE_PRESSED);
@@ -182,20 +183,20 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
 
         static lv_style_t dropdown_style;
         lv_style_init(&dropdown_style);
-        lv_style_set_border_color(&dropdown_style, lv_palette_main(LV_PALETTE_GREY));
+        lv_style_set_border_color(&dropdown_style, THEME_COLOR_BORDER_NEUTRAL);
         lv_style_set_border_width(&dropdown_style, 1);
 
         static lv_style_t dropdown_focus_style;
         lv_style_init(&dropdown_focus_style);
-        lv_style_set_border_color(&dropdown_focus_style, lv_color_black());
+        lv_style_set_border_color(&dropdown_focus_style, THEME_COLOR_BLACK);
         lv_style_set_border_width(&dropdown_focus_style, 2);
 
         static lv_style_t dropdown_focus_key_style;
         lv_style_init(&dropdown_focus_key_style);
-        lv_style_set_border_color(&dropdown_focus_key_style, lv_color_black());
+        lv_style_set_border_color(&dropdown_focus_key_style, THEME_COLOR_BLACK);
         lv_style_set_border_width(&dropdown_focus_key_style, 2);
-        lv_style_set_bg_color(&dropdown_focus_key_style, lv_color_black());
-        lv_style_set_text_color(&dropdown_focus_key_style, lv_color_white());
+        lv_style_set_bg_color(&dropdown_focus_key_style, THEME_COLOR_BLACK);
+        lv_style_set_text_color(&dropdown_focus_key_style, THEME_COLOR_TEXT_ON_DARK);
 
         lv_obj_add_style(obj, &dropdown_style, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_add_style(obj, &dropdown_focus_style, LV_PART_MAIN | LV_STATE_FOCUSED);
@@ -206,7 +207,7 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
         static lv_style_t s_style_focus_bg_color;
 
         lv_style_init(&s_style_bg_color);
-        lv_style_set_bg_color(&s_style_bg_color, lv_color_black());
+        lv_style_set_bg_color(&s_style_bg_color, THEME_COLOR_BLACK);
         lv_style_set_bg_opa(&s_style_bg_color, 255);
 
         lv_obj_add_style(obj, &s_style_bg_color, LV_PART_SELECTED | LV_STATE_CHECKED);
@@ -216,7 +217,7 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
         static lv_style_t textarea_style_bg_color;
 
         lv_style_init(&textarea_style_bg_color);
-        lv_style_set_border_color(&textarea_style_bg_color, lv_color_black());
+        lv_style_set_border_color(&textarea_style_bg_color, THEME_COLOR_BLACK);
         lv_style_set_border_width(&textarea_style_bg_color, 2);
         lv_obj_add_style(obj, &textarea_style_bg_color, LV_STATE_FOCUS_KEY);
 
@@ -224,8 +225,8 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
         static lv_style_t textarea_style_focus_bg_color;
         lv_style_init(&textarea_style_focus_bg_color);
         lv_style_set_shadow_width(&textarea_style_focus_bg_color, 2);
-        lv_style_set_shadow_color(&textarea_style_focus_bg_color, lv_palette_main(LV_PALETTE_BLUE));
-        lv_style_set_outline_color(&textarea_style_focus_bg_color, lv_palette_main(LV_PALETTE_BLUE));
+        lv_style_set_shadow_color(&textarea_style_focus_bg_color, THEME_COLOR_ACCENT_BLUE);
+        lv_style_set_outline_color(&textarea_style_focus_bg_color, THEME_COLOR_ACCENT_BLUE);
         lv_style_set_outline_opa(&textarea_style_focus_bg_color, LV_OPA_100);
         lv_obj_add_style(obj, &textarea_style_focus_bg_color, LV_STATE_EDITED);
         lv_obj_add_style(obj, &textarea_style_focus_bg_color, LV_STATE_FOCUS_KEY);
@@ -234,9 +235,9 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
 
         static lv_style_t menu_page_sel_style;
         lv_style_init(&menu_page_sel_style);
-        lv_style_set_bg_color(&menu_page_sel_style, lv_color_black());
-        lv_style_set_text_color(&menu_page_sel_style, lv_color_white());
-        lv_style_set_border_color(&menu_page_sel_style, lv_color_black());
+        lv_style_set_bg_color(&menu_page_sel_style, THEME_COLOR_BLACK);
+        lv_style_set_text_color(&menu_page_sel_style, THEME_COLOR_TEXT_ON_DARK);
+        lv_style_set_border_color(&menu_page_sel_style, THEME_COLOR_BLACK);
         lv_style_set_border_width(&menu_page_sel_style, 1);
         lv_style_set_radius(&menu_page_sel_style, 10);
 
@@ -250,7 +251,7 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
 
         static lv_style_t menu_page_default_style;
         lv_style_init(&menu_page_default_style);
-        lv_style_set_border_color(&menu_page_default_style, lv_palette_main(LV_PALETTE_PURPLE));
+        lv_style_set_border_color(&menu_page_default_style, THEME_COLOR_ACCENT_PURPLE);
         lv_style_set_border_width(&menu_page_default_style, 0);
         lv_style_set_radius(&menu_page_default_style, 10);
         lv_obj_add_style(obj,  &menu_page_default_style, 0);
@@ -258,7 +259,7 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
 
         static lv_style_t menu_page_focus_style;
         lv_style_init(&menu_page_focus_style);
-        lv_style_set_border_color(&menu_page_focus_style, lv_color_black());
+        lv_style_set_border_color(&menu_page_focus_style, THEME_COLOR_BLACK);
         lv_style_set_border_width(&menu_page_focus_style, 1);
         lv_style_set_radius(&menu_page_focus_style, 10);
         lv_obj_add_style(obj,  &menu_page_focus_style, LV_PART_MAIN | LV_STATE_FOCUSED);
@@ -267,8 +268,8 @@ static void new_theme_apply_cb(lv_theme_t *th, lv_obj_t *obj)
 
         static lv_style_t bg_color_primary;
         lv_style_init(&bg_color_primary);
-        lv_style_set_bg_color(&bg_color_primary, lv_color_black());
-        lv_style_set_text_color(&bg_color_primary, lv_color_white());
+        lv_style_set_bg_color(&bg_color_primary, THEME_COLOR_BLACK);
+        lv_style_set_text_color(&bg_color_primary, THEME_COLOR_TEXT_ON_DARK);
         lv_style_set_bg_opa(&bg_color_primary, LV_OPA_COVER);
         lv_obj_add_style(obj, &bg_color_primary, LV_STATE_FOCUS_KEY);
         lv_obj_add_style(obj, &bg_color_primary, LV_STATE_PRESSED);

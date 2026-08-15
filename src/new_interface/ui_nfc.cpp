@@ -22,6 +22,7 @@
  * the field is a continuous battery drain, so that pairing matters.
  */
 #include "ui_define.h"
+#include "app_config.h"
 
 static lv_obj_t *msgbox = NULL;     ///< the "join this WiFi network?" dialog, or NULL
 static lv_obj_t *menu = NULL;
@@ -123,7 +124,7 @@ void ui_nfc_enter(lv_obj_t *parent)
 
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
-    lv_obj_set_style_text_color(label, lv_color_black(), 0);
+    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_LIGHT, 0);
 
     lv_obj_align_to(label, image, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
 

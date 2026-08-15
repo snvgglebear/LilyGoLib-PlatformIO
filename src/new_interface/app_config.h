@@ -15,6 +15,90 @@
 #pragma once
 
 #include <stdint.h>
+#include <lvgl.h>
+
+// ---------------------------------------------------------------------------
+// Shared UI theme -- colors and common sizing
+// ---------------------------------------------------------------------------
+//
+// Every ui_*.cpp screen builds its styling from these instead of calling
+// lv_color_*()/lv_palette_*() or writing pixel literals directly, so the
+// app's look can be retinted/resized by editing this section alone. Named by
+// role, not value -- several roles deliberately share the same underlying
+// color or size today but may need to diverge later.
+//
+// Base theme colors, also handed to lv_theme_default_init() in ui_main.cpp.
+#define THEME_COLOR_BLACK                  lv_color_black()
+#define THEME_COLOR_WHITE                  lv_color_white()
+#define THEME_COLOR_PRIMARY                THEME_COLOR_BLACK
+#define THEME_COLOR_SECONDARY              lv_palette_darken(LV_PALETTE_GREY, 3)
+
+// Text
+#define THEME_COLOR_TEXT_ON_DARK           THEME_COLOR_WHITE     ///< default text on this app's near-black screens
+#define THEME_COLOR_TEXT_ON_LIGHT          THEME_COLOR_BLACK     ///< text on light/white cards (walkie, chat, clock, all-apps list)
+#define THEME_COLOR_TEXT_SECONDARY         lv_palette_main(LV_PALETTE_GREY)     ///< de-emphasized captions (alarm status, toast body)
+#define THEME_COLOR_TEXT_MUTED             lv_color_hex(0x888888)               ///< medium grey; walkie idle status label
+#define THEME_COLOR_TEXT_INFO              lv_color_hex(0x5f5f5f)               ///< dark grey; walkie nickname/channel info rows
+#define THEME_COLOR_TEXT_ON_LIGHT_DIM      lv_color_hex(0x2A2A2A)               ///< charcoal; walkie contact-list row text (same value as THEME_COLOR_BG_CHIP_DARK, different role -- kept separate on purpose)
+#define THEME_COLOR_TEXT_PLACEHOLDER       lv_color_hex(0xAAAAAA)               ///< light grey; walkie "no messages yet" placeholder
+#define THEME_COLOR_TEXT_WARNING           lv_palette_main(LV_PALETTE_ORANGE)   ///< settings screen "peripheral missing" note
+
+// Backgrounds
+#define THEME_COLOR_BG_DARK                THEME_COLOR_BLACK       ///< screen / dialog / menu backgrounds
+#define THEME_COLOR_BG_LIGHT               THEME_COLOR_WHITE       ///< light "card" backgrounds (walkie, chat bar, toast buttons)
+#define THEME_COLOR_BG_PANEL                lv_color_hex(0x1a1a1a)  ///< dark meter/level panel fill (microphone)
+#define THEME_COLOR_BG_DIAL                 lv_color_hex(0x101010)  ///< analog clock dial fill
+#define THEME_COLOR_BG_TOAST               lv_color_hex(0x202020)  ///< notification toast
+#define THEME_COLOR_BG_CHIP_DARK           lv_color_hex(0x2A2A2A)  ///< walkie's neutral dark chip/button fill (and its inactive states)
+
+// Borders
+#define THEME_COLOR_BORDER_LIGHT           lv_color_hex(0xDDDDDD)               ///< walkie contact-list panel border
+#define THEME_COLOR_BORDER_NEUTRAL         lv_palette_main(LV_PALETTE_GREY)     ///< dropdown default border
+
+// Accents
+#define THEME_COLOR_ACCENT_RED             lv_color_hex(0xCC3333)               ///< walkie talking/recording indicator
+#define THEME_COLOR_ACCENT_GREEN           lv_color_hex(0x33AA33)               ///< walkie connected-peer indicator
+#define THEME_COLOR_ACCENT_BLUE            lv_palette_main(LV_PALETTE_BLUE)     ///< textarea focus outline, alarm tab active state
+#define THEME_COLOR_ACCENT_YELLOW          lv_palette_main(LV_PALETTE_YELLOW)   ///< analog clock second hand + dial border
+#define THEME_COLOR_ACCENT_PURPLE          lv_palette_main(LV_PALETTE_PURPLE)   ///< menu page border
+#define THEME_COLOR_ALERT                  lv_palette_main(LV_PALETTE_RED)      ///< sensor motion LED
+
+// Chat bubbles (ui_msgchat.cpp)
+#define THEME_COLOR_CHAT_BUBBLE_SENT       lv_color_hex(0x99ccff)
+#define THEME_COLOR_CHAT_BUBBLE_RECEIVED   lv_color_hex(0xe6e6e6)
+
+// Process-bar gradient (ui_tools.cpp's ui_create_process_bar())
+#define THEME_COLOR_PROGRESS_GRADIENT_START   lv_palette_lighten(LV_PALETTE_GREY, 1)
+#define THEME_COLOR_PROGRESS_GRADIENT_END     lv_palette_lighten(LV_PALETTE_GREY, 20)
+
+/// Shadow width behind a launcher/pinned-link icon button (ui_main.cpp's
+/// create_app_icon(), ui_pinned_links.cpp -- both draw the same icon shape).
+#define THEME_ICON_BUTTON_SHADOW_WIDTH   30
+
+// ---------------------------------------------------------------------------
+// Microphone level meter (ui_microphone.cpp)
+// ---------------------------------------------------------------------------
+
+#define MIC_METER_BAR_WIDTH          8
+#define MIC_METER_BAR_HEIGHT         75
+#define MIC_METER_BAR_SPACING        2
+#define MIC_METER_CHANNEL_Y_OFFSET   90   ///< vertical gap between the left and right rows
+
+/// Each bar's color sweeps across a hue range by level; left/right channels
+/// use disjoint ranges so the two rows read as distinct at a glance.
+#define MIC_METER_HUE_LEFT_START      180
+#define MIC_METER_HUE_LEFT_END        360
+#define MIC_METER_HUE_RIGHT_START     0
+#define MIC_METER_HUE_RIGHT_END       180
+#define MIC_METER_SATURATION          100
+#define MIC_METER_VALUE                100
+
+// ---------------------------------------------------------------------------
+// Walkie-talkie push-to-talk visuals (ui_walkie.cpp)
+// ---------------------------------------------------------------------------
+
+#define WALKIE_MIC_BUTTON_DIAMETER   72   ///< centre mic circle diameter
+#define WALKIE_RIPPLE_GROWTH_PX      64   ///< how far the talking-indicator rings expand
 
 // ---------------------------------------------------------------------------
 // Clock face

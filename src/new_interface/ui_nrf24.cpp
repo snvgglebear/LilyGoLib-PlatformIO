@@ -26,6 +26,7 @@
  *      determines which units can hear each other.
  */
 #include "ui_define.h"
+#include "app_config.h"
 
 #ifdef USING_EXTERN_NRF2401
 
@@ -374,7 +375,7 @@ void ui_nrf24_enter(lv_obj_t *parent)
         lv_obj_align(img, LV_ALIGN_TOP_MID, 0, lv_pct(10));
 
         lv_obj_t *label = lv_label_create(cont);
-        lv_obj_set_style_text_color(label, lv_color_black(), LV_PART_MAIN);
+        lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
         lv_label_set_text(label, "NRF2401 module not detected.");
 
         lv_menu_set_page(menu, main_page);

@@ -42,6 +42,7 @@
  * @see ITU-T G.722 (wideband speech codec): https://www.itu.int/rec/T-REC-G.722
  */
 #include "ui_define.h"
+#include "app_config.h"
 #ifdef ARDUINO
 #include "esp_arduino_version.h"
 #endif
@@ -178,8 +179,8 @@ static lv_obj_t        *s_contact_list = NULL;
 // Mic "ripple" indicator (talk/receive visualisation)
 static lv_obj_t        *s_mic_icon   = NULL;
 static lv_obj_t        *s_ripple[2]  = {NULL, NULL};
-static constexpr int    kMicDia      = 72;   // centre mic circle diameter
-static constexpr int    kRippleGrow  = 64;   // how far the rings expand
+static constexpr int    kMicDia      = WALKIE_MIC_BUTTON_DIAMETER;
+static constexpr int    kRippleGrow  = WALKIE_RIPPLE_GROWTH_PX;
 
 // Setup-page widgets
 static lv_obj_t        *s_nick_ta    = NULL;
@@ -353,7 +354,7 @@ static void rebuild_contact_list()
     if (s_contacts.empty()) {
         lv_obj_t *empty = lv_label_create(s_contact_list);
         lv_label_set_text(empty, "Searching...");
-        lv_obj_set_style_text_color(empty, lv_color_hex(0xAAAAAA), 0);
+        lv_obj_set_style_text_color(empty, THEME_COLOR_TEXT_PLACEHOLDER, 0);
         return;
     }
 
@@ -361,7 +362,7 @@ static void rebuild_contact_list()
         lv_obj_t *row = lv_label_create(s_contact_list);
         lv_label_set_text_fmt(row, "%s %s", LV_SYMBOL_CALL, c.nickname);
         lv_obj_set_width(row, lv_pct(100));
-        lv_obj_set_style_text_color(row, lv_color_hex(0x2A2A2A), 0);
+        lv_obj_set_style_text_color(row, THEME_COLOR_TEXT_ON_LIGHT_DIM, 0);
         lv_label_set_long_mode(row, LV_LABEL_LONG_DOT);
     }
 }
@@ -439,27 +440,27 @@ static void walkie_timer_cb(lv_timer_t *t)
     switch (st) {
     case WALKIE_STATE_TRANSMIT:
         caption = "TALKING";
-        accent  = lv_color_hex(0xCC3333);   // red
+        accent  = THEME_COLOR_ACCENT_RED;   // red
         break;
     case WALKIE_STATE_RECEIVE:
         caption = "RECEIVING";
-        accent  = lv_color_hex(0x33AA33);   // green
+        accent  = THEME_COLOR_ACCENT_GREEN;   // green
         break;
     default:
         caption = "IDLE";
-        accent  = lv_color_hex(0x2A2A2A);
+        accent  = THEME_COLOR_BG_CHIP_DARK;
         active  = false;
         break;
     }
 
     lv_label_set_text(s_status_label, caption);
     lv_obj_set_style_text_color(s_status_label,
-                                active ? accent : lv_color_hex(0x888888), 0);
+                                active ? accent : THEME_COLOR_TEXT_MUTED, 0);
 
     // Mic button colour: lit with the accent while active, dark when idle.
     if (s_ptt_btn) {
         lv_obj_set_style_bg_color(s_ptt_btn,
-                                  active ? accent : lv_color_hex(0x2A2A2A), 0);
+                                  active ? accent : THEME_COLOR_BG_CHIP_DARK, 0);
     }
 
     // Ripple animation: two rings radiating outward and fading, 50% out of
@@ -595,7 +596,7 @@ static void build_walkie_ui(lv_obj_t *parent)
 {
     lv_obj_t *cont = lv_obj_create(parent);
     lv_obj_set_size(cont, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(cont, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(cont, THEME_COLOR_BG_LIGHT, 0);
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_pad_all(cont, 4, 0);
     lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_ROW);
@@ -606,13 +607,13 @@ static void build_walkie_ui(lv_obj_t *parent)
     lv_obj_set_size(left, lv_pct(38), lv_pct(100));
     lv_obj_set_style_pad_all(left, 4, 0);
     lv_obj_set_style_border_width(left, 1, 0);
-    lv_obj_set_style_border_color(left, lv_color_hex(0xDDDDDD), 0);
+    lv_obj_set_style_border_color(left, THEME_COLOR_BORDER_LIGHT, 0);
     lv_obj_set_style_radius(left, 6, 0);
     lv_obj_set_flex_flow(left, LV_FLEX_FLOW_COLUMN);
 
     lv_obj_t *title = lv_label_create(left);
     lv_label_set_text(title, "Contacts");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x5f5f5f), 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_INFO, 0);
 
     s_contact_list = lv_obj_create(left);
     lv_obj_set_width(s_contact_list, lv_pct(100));
@@ -652,7 +653,7 @@ static void build_walkie_ui(lv_obj_t *parent)
         lv_obj_set_size(s_ripple[i], kMicDia, kMicDia);
         lv_obj_set_style_radius(s_ripple[i], LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_border_width(s_ripple[i], 0, 0);
-        lv_obj_set_style_bg_color(s_ripple[i], lv_color_hex(0xCC3333), 0);
+        lv_obj_set_style_bg_color(s_ripple[i], THEME_COLOR_ACCENT_RED, 0);
         lv_obj_set_style_bg_opa(s_ripple[i], LV_OPA_TRANSP, 0);
         lv_obj_remove_flag(s_ripple[i], LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(s_ripple[i], LV_OBJ_FLAG_CLICKABLE);
@@ -663,27 +664,27 @@ static void build_walkie_ui(lv_obj_t *parent)
     s_ptt_btn = lv_btn_create(mic_stage);
     lv_obj_set_size(s_ptt_btn, kMicDia, kMicDia);
     lv_obj_set_style_radius(s_ptt_btn, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(s_ptt_btn, lv_color_hex(0x2A2A2A), 0);
+    lv_obj_set_style_bg_color(s_ptt_btn, THEME_COLOR_BG_CHIP_DARK, 0);
     lv_obj_center(s_ptt_btn);
     lv_obj_add_event_cb(s_ptt_btn, ptt_btn_event_cb, LV_EVENT_ALL, NULL);
 
     s_mic_icon = lv_image_create(s_ptt_btn);
     lv_image_set_src(s_mic_icon, &img_microphone);
     lv_obj_center(s_mic_icon);
-    lv_obj_set_style_image_recolor(s_mic_icon, lv_color_white(), 0);
+    lv_obj_set_style_image_recolor(s_mic_icon, THEME_COLOR_TEXT_ON_DARK, 0);
     lv_obj_set_style_image_recolor_opa(s_mic_icon, LV_OPA_COVER, 0);
 
     // Caption pinned to the top (IDLE / TALKING / RECEIVING). Created after the
     // stage so it renders above the rings.
     s_status_label = lv_label_create(right);
     lv_label_set_text(s_status_label, "IDLE");
-    lv_obj_set_style_text_color(s_status_label, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_color(s_status_label, THEME_COLOR_TEXT_MUTED, 0);
     lv_obj_align(s_status_label, LV_ALIGN_TOP_MID, 0, 2);
 
     // Talker line pinned to the bottom.
     s_talker_label = lv_label_create(right);
     lv_label_set_text(s_talker_label, "");
-    lv_obj_set_style_text_color(s_talker_label, lv_color_hex(0x5f5f5f), 0);
+    lv_obj_set_style_text_color(s_talker_label, THEME_COLOR_TEXT_INFO, 0);
     lv_obj_align(s_talker_label, LV_ALIGN_BOTTOM_MID, 0, -2);
 }
 
@@ -848,7 +849,7 @@ static void build_setup_ui(lv_obj_t *parent)
 
     lv_obj_t *cont = lv_obj_create(parent);
     lv_obj_set_size(cont, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(cont, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(cont, THEME_COLOR_BG_LIGHT, 0);
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_pad_all(cont, 8, 0);
     lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
@@ -858,7 +859,7 @@ static void build_setup_ui(lv_obj_t *parent)
     // ---- Nickname ----
     lv_obj_t *nick_info = lv_label_create(cont);
     lv_label_set_text(nick_info, "DEVICE NICKNAME");
-    lv_obj_set_style_text_color(nick_info, lv_color_hex(0x5f5f5f), 0);
+    lv_obj_set_style_text_color(nick_info, THEME_COLOR_TEXT_INFO, 0);
 
     s_nick_ta = lv_textarea_create(cont);
     lv_obj_set_width(s_nick_ta, lv_pct(90));
@@ -870,7 +871,7 @@ static void build_setup_ui(lv_obj_t *parent)
 
     // ---- ESP-NOW channel ----
     lv_obj_t *chan_info = lv_label_create(cont);
-    lv_obj_set_style_text_color(chan_info, lv_color_hex(0x5f5f5f), 0);
+    lv_obj_set_style_text_color(chan_info, THEME_COLOR_TEXT_INFO, 0);
 
     s_chan_dd = lv_dropdown_create(cont);
     lv_obj_set_width(s_chan_dd, lv_pct(90));
@@ -891,14 +892,14 @@ static void build_setup_ui(lv_obj_t *parent)
     // ---- Start ----
     lv_obj_t *start_btn = lv_btn_create(cont);
     lv_obj_set_width(start_btn, lv_pct(90));
-    lv_obj_set_style_bg_color(start_btn, lv_color_hex(0x2A2A2A), 0);
+    lv_obj_set_style_bg_color(start_btn, THEME_COLOR_BG_CHIP_DARK, 0);
     lv_obj_set_style_radius(start_btn, 12, 0);
     lv_obj_add_event_cb(start_btn, start_btn_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *start_label = lv_label_create(start_btn);
     lv_label_set_text(start_label, "Start");
     lv_obj_center(start_label);
-    lv_obj_set_style_text_color(start_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(start_label, THEME_COLOR_TEXT_ON_DARK, 0);
 
 #ifdef USING_TOUCHPAD
     s_keyboard = lv_keyboard_create(lv_scr_act());

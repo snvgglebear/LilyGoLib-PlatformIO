@@ -131,7 +131,7 @@ lv_obj_t *ui_battery_status_create(lv_obj_t *parent)
 
     lv_obj_t *label = lv_label_create(cont);
     lv_label_set_text(label, "--%");
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_DARK, 0);
     lv_obj_set_style_pad_left(label, 6, 0);
     ctx->label = label;
 

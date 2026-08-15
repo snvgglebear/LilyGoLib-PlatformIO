@@ -256,7 +256,7 @@ static lv_obj_t *create_subpage_lora(lv_obj_t *menu, lv_obj_t *main_page)
         // screen's fields.
         lv_obj_t *note = lv_label_create(sub_page);
         lv_label_set_text(note, "Currently off: battery saver");
-        lv_obj_set_style_text_color(note, lv_palette_main(LV_PALETTE_ORANGE), 0);
+        lv_obj_set_style_text_color(note, THEME_COLOR_TEXT_WARNING, 0);
     }
 
     lv_menu_set_load_page_event(menu, cont, sub_page);

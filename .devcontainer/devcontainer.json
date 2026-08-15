@@ -53,7 +53,11 @@
         // USB CDC) that re-enumerates the port mid-upload. A --device entry is
         // a snapshot taken at container start, so the re-created node would
         // never show up inside the container; a /dev bind tracks hotplug live.
-        "source=/dev,target=/dev,type=bind"
+        "source=/dev,target=/dev,type=bind",
+        // X11 forwarding, to view the SDL2 emulator window (Linux hosts only;
+        // run `xhost +local:` on the host first so the container's X clients
+        // are allowed to connect). Paired with DISPLAY in containerEnv below.
+        "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
     ],
     "runArgs": [
         // Permit opening USB-serial character devices:
@@ -69,23 +73,19 @@
     "containerEnv": {
         // Keep ALL Claude Code state (including what would otherwise live at
         // ~/.claude.json, outside the volume) inside the persisted volume.
-        "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+        "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+        // Paired with the /tmp/.X11-unix bind above, to view the SDL2
+        // emulator window (Linux hosts only; run `xhost +local:` on the
+        // host first so the container's X clients are allowed to connect).
+        "DISPLAY": "${localEnv:DISPLAY}"
     },
     // Named volumes are created root-owned on first use; hand them to the
     // container user before PlatformIO / Claude Code try to write to them.
     "postCreateCommand": "sudo chown -R vscode:vscode /home/vscode/.platformio /home/vscode/.claude && pio pkg update",
     "remoteUser": "vscode",
 
-    // Flashing a board over USB (`pio run -t upload`) or running an
-    // emulator_* target with a display requires extra host access that
-    // varies by platform, so it's left commented out rather than assumed:
-    //
-    // USB passthrough (Linux hosts only):
+    // Flashing a board over USB (`pio run -t upload`) requires extra host
+    // access that varies by platform, so it's left commented out rather
+    // than assumed (Linux hosts only):
     //"runArgs": ["--device=/dev/bus/usb"],
-    //
-    // X11 forwarding, to view the SDL2 emulator window (Linux hosts only,
-    // run `xhost +local:` on the host first): add this bind to "mounts"
-    // above and DISPLAY to "containerEnv":
-    //"source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
-    //"DISPLAY": "${localEnv:DISPLAY}"
 }

@@ -23,22 +23,7 @@
  * @see hal_interface.h:   FFT_SIZE, SAMPLE_RATE, FREQ_BANDS.
  */
 #include "ui_define.h"
-
-// Bar geometry, in pixels.
-#define BAR_WIDTH 8
-#define BAR_HEIGHT 75
-#define BAR_SPACING 2
-#define CHANNEL_Y_OFFSET 90     ///< vertical gap between the left and right rows
-
-// Colour gradient across the bars, as HSV. The two channels use opposite halves
-// of the colour wheel (left 180-360 degrees, right 0-180) so they are easy to
-// tell apart at a glance.
-#define HUE_START 180
-#define HUE_END 360
-#define HUE_START_R 0
-#define HUE_END_R 180
-#define SATURATION 100
-#define VALUE 100
+#include "app_config.h"
 
 static lv_timer_t *timer = NULL;    ///< pulls a new FFT frame and redraws the bars
 static lv_obj_t *menu = NULL;
@@ -76,7 +61,7 @@ static lv_color_t get_gradient_color(int index, int total, int start_hue, int en
     int hue = start_hue + (int)((end_hue - start_hue) * ratio);
     if (hue > 360) hue = 360;
     if (hue < 0) hue = 0;
-    return lv_color_hsv_to_rgb(hue, SATURATION, VALUE);
+    return lv_color_hsv_to_rgb(hue, MIC_METER_SATURATION, MIC_METER_VALUE);
 }
 
 
@@ -97,14 +82,14 @@ static void update_fft_display(lv_timer_t *timer)
 
     for (int i = 0; i < FREQ_BANDS; i++) {
         float value = constrain(fft_data.left_bands[i], 0.0f, 1.0f);
-        uint16_t bar_height = (uint16_t)(BAR_HEIGHT * value);
+        uint16_t bar_height = (uint16_t)(MIC_METER_BAR_HEIGHT * value);
         if (bar_height < 2) bar_height = 2;
         lv_obj_set_height(left_freq_bars[i], bar_height);
     }
 
     for (int i = 0; i < FREQ_BANDS; i++) {
         float value = constrain(fft_data.right_bands[i], 0.0f, 1.0f);
-        uint16_t bar_height = (uint16_t)(BAR_HEIGHT * value);
+        uint16_t bar_height = (uint16_t)(MIC_METER_BAR_HEIGHT * value);
         if (bar_height < 2) bar_height = 2;
         lv_obj_set_height(right_freq_bars[i], bar_height);
     }
@@ -142,19 +127,19 @@ void ui_microphone_enter(lv_obj_t *parent)
     } else {
         lv_obj_set_style_text_font(left_title, &lv_font_montserrat_48, 0);
     }
-    lv_obj_set_style_text_color(left_title, get_gradient_color(0, FREQ_BANDS, HUE_START, HUE_END), 0);
+    lv_obj_set_style_text_color(left_title, get_gradient_color(0, FREQ_BANDS, MIC_METER_HUE_LEFT_START, MIC_METER_HUE_LEFT_END), 0);
     lv_obj_align(left_title, LV_ALIGN_LEFT_MID, text_x_offset, -text_y_offset);
 
     for (int i = 0; i < FREQ_BANDS; i++) {
         lv_obj_t *bar_bg = lv_obj_create(main_page);
-        lv_obj_set_size(bar_bg, BAR_WIDTH, BAR_HEIGHT);
-        lv_obj_set_style_bg_color(bar_bg, lv_color_hex(0x1a1a1a), 0);
+        lv_obj_set_size(bar_bg, MIC_METER_BAR_WIDTH, MIC_METER_BAR_HEIGHT);
+        lv_obj_set_style_bg_color(bar_bg, THEME_COLOR_BG_PANEL, 0);
         lv_obj_align(bar_bg, LV_ALIGN_TOP_MID,
-                     (i - (FREQ_BANDS - 1) / 2.0f) * (BAR_WIDTH + BAR_SPACING), bar_y_offset);
+                     (i - (FREQ_BANDS - 1) / 2.0f) * (MIC_METER_BAR_WIDTH + MIC_METER_BAR_SPACING), bar_y_offset);
 
         left_freq_bars[i] = lv_obj_create(bar_bg);
-        lv_obj_set_size(left_freq_bars[i], BAR_WIDTH, 1);
-        lv_color_t color = get_gradient_color(i, FREQ_BANDS, HUE_START, HUE_END);
+        lv_obj_set_size(left_freq_bars[i], MIC_METER_BAR_WIDTH, 1);
+        lv_color_t color = get_gradient_color(i, FREQ_BANDS, MIC_METER_HUE_LEFT_START, MIC_METER_HUE_LEFT_END);
         lv_obj_set_style_bg_color(left_freq_bars[i], color, 0);
         lv_obj_align(left_freq_bars[i], LV_ALIGN_BOTTOM_MID, 0, 15);
     }
@@ -166,19 +151,19 @@ void ui_microphone_enter(lv_obj_t *parent)
     } else {
         lv_obj_set_style_text_font(right_title, &lv_font_montserrat_48, 0);
     }
-    lv_obj_set_style_text_color(right_title, get_gradient_color(0, FREQ_BANDS, HUE_START_R, HUE_END_R), 0);
+    lv_obj_set_style_text_color(right_title, get_gradient_color(0, FREQ_BANDS, MIC_METER_HUE_RIGHT_START, MIC_METER_HUE_RIGHT_END), 0);
     lv_obj_align(right_title, LV_ALIGN_LEFT_MID, text_x_offset, is_small_screen ? 20 : 0);
 
     for (int i = 0; i < FREQ_BANDS; i++) {
         lv_obj_t *bar_bg = lv_obj_create(main_page);
-        lv_obj_set_size(bar_bg, BAR_WIDTH, BAR_HEIGHT);
-        lv_obj_set_style_bg_color(bar_bg, lv_color_hex(0x1a1a1a), 0);
+        lv_obj_set_size(bar_bg, MIC_METER_BAR_WIDTH, MIC_METER_BAR_HEIGHT);
+        lv_obj_set_style_bg_color(bar_bg, THEME_COLOR_BG_PANEL, 0);
         lv_obj_align(bar_bg, LV_ALIGN_TOP_MID,
-                     (i - (FREQ_BANDS - 1) / 2.0f) * (BAR_WIDTH + BAR_SPACING), bar_y_offset + CHANNEL_Y_OFFSET);
+                     (i - (FREQ_BANDS - 1) / 2.0f) * (MIC_METER_BAR_WIDTH + MIC_METER_BAR_SPACING), bar_y_offset + MIC_METER_CHANNEL_Y_OFFSET);
 
         right_freq_bars[i] = lv_obj_create(bar_bg);
-        lv_obj_set_size(right_freq_bars[i], BAR_WIDTH, 1);
-        lv_color_t color = get_gradient_color(i, FREQ_BANDS, HUE_START_R, HUE_END_R);
+        lv_obj_set_size(right_freq_bars[i], MIC_METER_BAR_WIDTH, 1);
+        lv_color_t color = get_gradient_color(i, FREQ_BANDS, MIC_METER_HUE_RIGHT_START, MIC_METER_HUE_RIGHT_END);
         lv_obj_set_style_bg_color(right_freq_bars[i], color, 0);
         lv_obj_align(right_freq_bars[i], LV_ALIGN_BOTTOM_MID, 0, 15);
     }

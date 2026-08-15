@@ -11,6 +11,7 @@
  * through the same back_event_handler back to menu_show().
  */
 #include "ui_define.h"
+#include "app_config.h"
 
 static lv_obj_t *menu = NULL;
 static lv_obj_t *quit_btn = NULL;
@@ -54,6 +55,7 @@ void ui_all_apps_enter(lv_obj_t *parent)
 
     for (size_t i = 0; i < count; i++) {
         lv_obj_t *btn = lv_list_add_btn(list1, apps[i].icon, apps[i].name);
+        lv_obj_set_style_text_color(btn, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
         lv_obj_add_event_cb(btn, app_row_click_cb, LV_EVENT_CLICKED, apps[i].app);
     }
 

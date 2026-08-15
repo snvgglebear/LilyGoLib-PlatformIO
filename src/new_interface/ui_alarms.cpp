@@ -317,10 +317,10 @@ static void build_timer_tab(lv_obj_t *content)
 
     s_timer_label = lv_label_create(content);
     lv_obj_set_style_text_font(s_timer_label, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(s_timer_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(s_timer_label, THEME_COLOR_TEXT_ON_DARK, 0);
 
     s_timer_status_label = lv_label_create(content);
-    lv_obj_set_style_text_color(s_timer_status_label, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_text_color(s_timer_status_label, THEME_COLOR_TEXT_SECONDARY, 0);
 
     lv_obj_t *adj_row = lv_obj_create(content);
     lv_obj_remove_style_all(adj_row);
@@ -438,7 +438,7 @@ static void build_stopwatch_tab(lv_obj_t *content)
 
     s_sw_label = lv_label_create(content);
     lv_obj_set_style_text_font(s_sw_label, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(s_sw_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(s_sw_label, THEME_COLOR_TEXT_ON_DARK, 0);
 
     lv_obj_t *ctrl_row = lv_obj_create(content);
     lv_obj_remove_style_all(ctrl_row);
@@ -473,7 +473,7 @@ static void build_stopwatch_tab(lv_obj_t *content)
 
 static void style_tab_button(lv_obj_t *btn, bool active)
 {
-    lv_obj_set_style_bg_color(btn, active ? lv_palette_main(LV_PALETTE_BLUE) : lv_color_white(), 0);
+    lv_obj_set_style_bg_color(btn, active ? THEME_COLOR_ACCENT_BLUE : THEME_COLOR_BG_LIGHT, 0);
     lv_obj_set_style_bg_opa(btn, active ? LV_OPA_70 : LV_OPA_20, 0);
 }
 

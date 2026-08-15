@@ -1,3 +1,7 @@
+# Interface buildout
+1. settings panel.
+    - allow the user to configure the interface settings, including notification display time, vibration settings, and clock display options.
+    - panel should be a scrollable list of settings, with each setting having a toggle or input field as appropriate.
 # Interface functionality.
 - Phone notifications as "popups" on the screen, with a timeout and a callback function.
 - lora/meshtastic functionality (primarily managing the connection from the phone, but also supporting a bluetooth keyboard.)

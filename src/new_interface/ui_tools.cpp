@@ -25,6 +25,8 @@
  * @see https://docs.lvgl.io/master/details/common-widget-features/styles/index.html
  */
 #include "ui_define.h"
+#include "app_config.h"
+#include "usable_area/usable_area.h"
 
 // Modal dialog focus handling: while a message box is up, input is confined to
 // `msg_group` so the user cannot tab into the screen behind it. `prev_group`
@@ -48,14 +50,14 @@ lv_obj_t *ui_create_process_bar(lv_obj_t *parent, const char *title)
     static lv_style_t style_indic;
 
     lv_style_init(&style_bg);
-    lv_style_set_border_color(&style_bg, lv_color_black());
+    lv_style_set_border_color(&style_bg, THEME_COLOR_BLACK);
     lv_style_set_border_width(&style_bg, 2);
     lv_style_set_pad_all(&style_bg, 6);
     lv_style_set_radius(&style_bg, 6);
     lv_style_set_anim_time(&style_bg, 1000);
     lv_style_init(&style_indic);
     lv_style_set_bg_opa(&style_indic, LV_OPA_COVER);
-    lv_style_set_bg_color(&style_indic, lv_color_black());
+    lv_style_set_bg_color(&style_indic, THEME_COLOR_BG_DARK);
     lv_style_set_radius(&style_indic, 3);
 
 
@@ -68,8 +70,8 @@ lv_obj_t *ui_create_process_bar(lv_obj_t *parent, const char *title)
     static lv_grad_dsc_t grad;
     grad.dir = LV_GRAD_DIR_VER;
     grad.stops_count = 2;
-    grad.stops[0].color = lv_palette_lighten(LV_PALETTE_GREY, 1);
-    grad.stops[1].color = lv_palette_lighten(LV_PALETTE_GREY, 20);
+    grad.stops[0].color = THEME_COLOR_PROGRESS_GRADIENT_START;
+    grad.stops[1].color = THEME_COLOR_PROGRESS_GRADIENT_END;
 
     /*Shift the gradient to the bottom*/
     grad.stops[0].frac  = 128;
@@ -100,7 +102,7 @@ lv_obj_t *ui_create_process_bar(lv_obj_t *parent, const char *title)
     lv_obj_t *label = lv_label_create(cont);
     lv_label_set_text(label, title);
 #if LVGL_VERSION_MAJOR == 8
-    lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
 #endif
     lv_obj_align_to(label, bar, LV_ALIGN_OUT_BOTTOM_MID, 0, 20);
 
@@ -141,7 +143,7 @@ lv_obj_t *ui_create_option(lv_obj_t *parent, const char *title, const char *symb
     } else {
         lv_obj_set_size(obj, lv_pct(65), 40);
     }
-    lv_obj_set_style_outline_color(obj, lv_color_white(), LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_outline_color(obj, THEME_COLOR_TEXT_ON_DARK, LV_STATE_FOCUS_KEY);
 
     if (symbol_txt) {
         btn = lv_btn_create(cont);
@@ -237,7 +239,7 @@ lv_obj_t *create_msgbox(lv_obj_t *parent, const char *title_txt,
 
     lv_obj_t *content = lv_msgbox_get_text(msgbox);
     lv_obj_set_style_text_font(content, &lv_font_montserrat_18, LV_PART_MAIN);
-    lv_obj_set_style_text_color(content, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(content, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
 
     lv_obj_t *msg_btns = lv_msgbox_get_btns(msgbox);
     lv_btnmatrix_set_btn_ctrl(msg_btns, 0, LV_BTNMATRIX_CTRL_CHECKED);
@@ -247,12 +249,12 @@ lv_obj_t *create_msgbox(lv_obj_t *parent, const char *title_txt,
     lv_obj_set_size(msgbox, lv_pct(90), lv_pct(60));
     lv_obj_set_style_radius(msgbox, 30, LV_PART_MAIN);
 
-    lv_obj_set_style_bg_color(msgbox, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(msgbox, THEME_COLOR_BG_DARK, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(msgbox, LV_OPA_60, LV_PART_MAIN);
 
     lv_obj_t *title = lv_msgbox_get_title(msgbox);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
-    lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
 
     lv_obj_add_event_cb(msgbox, btns_event_cb, LV_EVENT_CLICKED, user_data);
 
@@ -453,6 +455,13 @@ lv_obj_t *create_radius_button(lv_obj_t *parent, const void *image, lv_event_cb_
  * On boards without a touchscreen the menu widget's own root back button is
  * enabled, since there is no swipe gesture to go back with; touch boards use the
  * floating back button instead and would otherwise show two.
+ *
+ * Sized to the safe-area rectangle (usable_area.h) rather than the full parent
+ * rect: at LV_PCT(100) the menu's header bar and top/bottom rows ran under the
+ * T-Watch-Ultra's curved bezel, where the screen root clips them away. Resizing
+ * the menu object itself (instead of wrapping it in a safe_area_rect() child)
+ * keeps every existing `lv_obj_del(menu)` call site correct with no orphaned
+ * container left behind.
  */
 lv_obj_t *create_menu(lv_obj_t *parent, lv_event_cb_t event_cb)
 {
@@ -461,7 +470,7 @@ lv_obj_t *create_menu(lv_obj_t *parent, lv_event_cb_t event_cb)
     lv_menu_set_mode_root_back_btn(menu, LV_MENU_ROOT_BACK_BTN_ENABLED);
 #endif
     lv_obj_add_event_cb(menu, event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_set_size(menu, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_size(menu, safe_area_screen_width() - 2 * SAFE_INSET, safe_area_screen_height() - 2 * SAFE_INSET);
     lv_obj_center(menu);
     return menu;
 }

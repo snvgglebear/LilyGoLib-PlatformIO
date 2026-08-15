@@ -19,6 +19,7 @@
  * @see hal_interface.cpp: hw_set_ble_kb_*() and the BleKeyboard object.
  */
 #include "ui_define.h"
+#include "app_config.h"
 
 static lv_timer_t *timer = NULL;    ///< polls the connection state
 
@@ -77,7 +78,7 @@ void ui_ble_kb_enter(lv_obj_t *parent)
 
     label = lv_label_create(bar);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
     lv_label_set_text_fmt(label, "%u%%", 99);
     lv_obj_center(label);
     ble_kb_state.label = label;

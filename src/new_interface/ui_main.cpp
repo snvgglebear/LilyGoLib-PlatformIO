@@ -240,9 +240,9 @@ lv_obj_t *create_app_icon(lv_obj_t *parent, const char *name, const lv_img_dsc_t
 
     lv_obj_set_size(btn, w, h);
     lv_obj_set_style_bg_opa(btn, LV_OPA_0, 0);
-    lv_obj_set_style_outline_color(btn, lv_color_black(), LV_STATE_FOCUS_KEY);
-    lv_obj_set_style_shadow_width(btn, 30, LV_PART_MAIN);
-    lv_obj_set_style_shadow_color(btn, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_outline_color(btn, THEME_COLOR_BLACK, LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_shadow_width(btn, THEME_ICON_BUTTON_SHADOW_WIDTH, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(btn, THEME_COLOR_BLACK, LV_PART_MAIN);
     // On the small 240x240 watch panels a circular icon reads better than a
     // rounded rectangle; the wider Ultra/Pager screens keep the default shape.
     uint32_t phy_hor_res = lv_display_get_physical_horizontal_resolution(NULL);
@@ -316,7 +316,7 @@ static void hw_device_poll(lv_timer_t *t)
     if (params.battery_voltage < 3300 && params.usb_voltage == 0) {
         printf("Low battery voltage: %lu mV USB Voltage: %lu mV\n", params.battery_voltage, params.usb_voltage);
         lv_obj_clean(lv_screen_active());
-        lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(lv_screen_active(), THEME_COLOR_BG_DARK, LV_PART_MAIN);
         lv_obj_set_style_radius(lv_screen_active(), 0, 0);
 
         lv_obj_t *image = lv_image_create(lv_screen_active());
@@ -325,7 +325,7 @@ static void hw_device_poll(lv_timer_t *t)
 
         lv_obj_t *label = lv_label_create(lv_screen_active());
         lv_label_set_text(label, "Battery Low!\nShutting down...");
-        lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN);
+        lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_18, LV_PART_MAIN);
         lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -30);
 
@@ -451,13 +451,13 @@ void setupGui()
     // Splash screen. lv_refr_now() draws it synchronously, then the UI is
     // blocked for 5 seconds -- nothing else can run during this delay, which is
     // acceptable only because it happens once at boot.
-    lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(lv_screen_active(), THEME_COLOR_BG_DARK, LV_PART_MAIN);
     lv_obj_set_style_radius(lv_screen_active(), 0, 0);
     lv_obj_t *start_logo = lv_label_create(lv_screen_active());
     lv_label_set_text(start_logo, "LilyGo");
     LV_FONT_DECLARE(font_logo_84);
     lv_obj_set_style_text_font(start_logo, &font_logo_84, LV_PART_MAIN);
-    lv_obj_set_style_text_color(start_logo, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(start_logo, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
     lv_obj_center(start_logo);
     lv_refr_now(NULL);
     lv_delay_ms(5000);
@@ -466,7 +466,7 @@ void setupGui()
     disable_keyboard();
 
     const lv_font_t  *main_font = MAIN_FONT;
-    lv_theme_default_init(NULL, lv_color_black(), lv_palette_darken(LV_PALETTE_GREY, 3),
+    lv_theme_default_init(NULL, THEME_COLOR_PRIMARY, THEME_COLOR_SECONDARY,
                           LV_THEME_DEFAULT_DARK, main_font);
 
     theme_init();

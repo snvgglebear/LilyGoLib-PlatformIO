@@ -25,6 +25,7 @@
  * @see ui_msgchat.cpp for the app that sends real messages over the same radio.
  */
 #include "ui_define.h"
+#include "app_config.h"
 
 
 // Dropdown captions, paired with the *_args_list arrays below. The two must stay
@@ -545,7 +546,7 @@ void ui_radio_enter(lv_obj_t *parent)
         lv_obj_set_size(cont, lv_pct(100), 80);
         lv_obj_t *label = lv_label_create(cont);
         lv_label_set_text(label, "Radio module not detected!");
-        lv_obj_set_style_text_color(label, lv_color_black(), 0);
+        lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_LIGHT, 0);
         lv_obj_set_width(label, lv_pct(90));
         lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -562,7 +563,7 @@ void ui_radio_enter(lv_obj_t *parent)
         lv_label_set_text(label, hw_get_lora_battery_saver_active()
                                   ? "LoRa is off to save battery"
                                   : "LoRa is off -- enable it in Settings");
-        lv_obj_set_style_text_color(label, lv_color_black(), 0);
+        lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_LIGHT, 0);
         lv_obj_set_width(label, lv_pct(90));
         lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);

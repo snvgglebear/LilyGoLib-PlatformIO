@@ -39,8 +39,8 @@ static void add_all_apps_icon(lv_obj_t *parent)
     lv_obj_t *btn = lv_btn_create(parent);
     lv_obj_set_size(btn, 150, LV_PCT(100));
     lv_obj_set_style_bg_opa(btn, LV_OPA_0, 0);
-    lv_obj_set_style_shadow_width(btn, 30, LV_PART_MAIN);
-    lv_obj_set_style_shadow_color(btn, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(btn, THEME_ICON_BUTTON_SHADOW_WIDTH, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(btn, THEME_COLOR_BLACK, LV_PART_MAIN);
 
     lv_obj_t *label = lv_label_create(btn);
     lv_label_set_text(label, LV_SYMBOL_LIST "\nAll Apps");

@@ -15,6 +15,7 @@
  */
 #include "ui_clock_analog.h"
 #include "ui_define.h"
+#include "app_config.h"
 #include <math.h>
 
 typedef struct {
@@ -100,14 +101,14 @@ lv_obj_t *ui_clock_analog_create(lv_obj_t *parent)
     lv_obj_set_size(dial, ctx->radius * 2, ctx->radius * 2);
     lv_obj_center(dial);
     lv_obj_set_style_radius(dial, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(dial, lv_color_hex(0x101010), 0);
-    lv_obj_set_style_border_color(dial, lv_palette_main(LV_PALETTE_YELLOW), 0);
+    lv_obj_set_style_bg_color(dial, THEME_COLOR_BG_DIAL, 0);
+    lv_obj_set_style_border_color(dial, THEME_COLOR_ACCENT_YELLOW, 0);
     lv_obj_set_style_border_width(dial, 3, 0);
     lv_obj_remove_flag(dial, LV_OBJ_FLAG_SCROLLABLE);
 
-    ctx->hand_hour = make_hand(page, lv_color_white(), 6);
-    ctx->hand_min  = make_hand(page, lv_color_white(), 4);
-    ctx->hand_sec  = make_hand(page, lv_palette_main(LV_PALETTE_YELLOW), 2);
+    ctx->hand_hour = make_hand(page, THEME_COLOR_TEXT_ON_DARK, 6);
+    ctx->hand_min  = make_hand(page, THEME_COLOR_TEXT_ON_DARK, 4);
+    ctx->hand_sec  = make_hand(page, THEME_COLOR_ACCENT_YELLOW, 2);
 
     ctx->timer = lv_timer_create(tick, 1000, ctx);
     lv_timer_ready(ctx->timer);   // paint real hand positions immediately

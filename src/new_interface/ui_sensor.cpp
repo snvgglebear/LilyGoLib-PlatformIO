@@ -24,6 +24,7 @@
  *      USING_BMA423_SENSOR per-board flags.
  */
 #include "ui_define.h"
+#include "app_config.h"
 
 LV_IMG_DECLARE(img_dog);
 
@@ -122,7 +123,7 @@ void ui_sensor_enter(lv_obj_t *parent)
 
     lv_obj_t *led1  = lv_led_create(cont);
     lv_led_set_brightness(led1, 150);
-    lv_led_set_color(led1, lv_palette_main(LV_PALETTE_RED));
+    lv_led_set_color(led1, THEME_COLOR_ALERT);
     lv_obj_align(led1, LV_ALIGN_TOP_LEFT, 5, 5);
 
     timer = lv_timer_create([](lv_timer_t *t) {

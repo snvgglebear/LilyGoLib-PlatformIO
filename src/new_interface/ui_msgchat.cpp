@@ -25,6 +25,7 @@
  * @see ui_radio.cpp for the settings screen that owns those parameters.
  */
 #include "ui_define.h"
+#include "app_config.h"
 
 #ifdef USING_TOUCHPAD
 static lv_obj_t *keyboard = NULL;       ///< on-screen keyboard, touch boards only
@@ -154,9 +155,9 @@ static void create_msg_label(const char *text, bool is_send, lv_color_t bg_color
 
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     if (is_send) {
-        lv_obj_set_style_bg_color(label, lv_color_hex(0x99ccff), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(label, THEME_COLOR_CHAT_BUBBLE_SENT, LV_PART_MAIN);
     } else {
-        lv_obj_set_style_bg_color(label, lv_color_hex(0xe6e6e6), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(label, THEME_COLOR_CHAT_BUBBLE_RECEIVED, LV_PART_MAIN);
     }
     lv_obj_set_style_bg_opa(label, LV_OPA_70, LV_PART_MAIN);
     lv_obj_set_style_radius(label, 10, LV_PART_MAIN);
@@ -198,7 +199,7 @@ static void send_btn_cb(lv_event_t *e)
 
     lv_snprintf(buf, sizeof(buf), "%s:%s", get_formatted_time(), text);
 
-    create_msg_label(buf, true, lv_color_hex(0x99ccff));
+    create_msg_label(buf, true, THEME_COLOR_CHAT_BUBBLE_SENT);
     msg_count++;
 
     radio_transmit((const uint8_t *)text, strlen(text));
@@ -224,7 +225,7 @@ void recv_msg(const char *text)
         }
     }
     lv_snprintf(buf, sizeof(buf), "%s:%s", get_formatted_time(), text);
-    create_msg_label(buf, false, lv_color_hex(0xe6e6e6));
+    create_msg_label(buf, false, THEME_COLOR_CHAT_BUBBLE_RECEIVED);
     msg_count++;
     lv_obj_scroll_to_y(msg_page, lv_obj_get_y(msg_cont) + lv_obj_get_height(msg_cont), LV_ANIM_ON);
 }
@@ -308,7 +309,7 @@ void create_chat_ui(lv_obj_t *parent)
 {
     lv_obj_t *main_cont = lv_obj_create(parent);
     lv_obj_set_size(main_cont, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(main_cont, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(main_cont, THEME_COLOR_BG_LIGHT, LV_PART_MAIN);
     lv_obj_set_style_border_width(main_cont, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(main_cont, 0, LV_PART_MAIN);
 
@@ -346,8 +347,8 @@ void create_chat_ui(lv_obj_t *parent)
     lv_textarea_set_placeholder_text(input_textarea, "Please enter your message...");
     lv_obj_set_style_radius(input_textarea, 5, LV_PART_MAIN);
     lv_obj_set_style_border_width(input_textarea, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(input_textarea, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(input_textarea, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_border_color(input_textarea, THEME_COLOR_BLACK, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(input_textarea, THEME_COLOR_BG_LIGHT, LV_PART_MAIN);
     lv_textarea_set_max_length(input_textarea, 500);
     lv_obj_set_scroll_dir(input_textarea, LV_DIR_NONE);
     lv_obj_set_scrollbar_mode(input_textarea, LV_SCROLLBAR_MODE_OFF);
@@ -356,26 +357,26 @@ void create_chat_ui(lv_obj_t *parent)
     lv_obj_t *send_btn = lv_btn_create(input_cont);
     lv_obj_set_size(send_btn, lv_pct(10), lv_pct(100));
     lv_obj_set_style_radius(send_btn, 5, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(send_btn, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(send_btn, THEME_COLOR_BG_LIGHT, LV_PART_MAIN);
     lv_obj_add_event_cb(send_btn, send_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_set_style_pad_all(send_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(send_btn, 1, LV_PART_MAIN);
     lv_obj_t *send_label = lv_label_create(send_btn);
     lv_label_set_text(send_label, LV_SYMBOL_GPS);
     lv_obj_center(send_label);
-    lv_obj_set_style_text_color(send_label, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(send_label, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
 
 
     lv_obj_t *setting_btn = lv_btn_create(input_cont);
     lv_obj_set_size(setting_btn, lv_pct(10), lv_pct(100));
     lv_obj_set_style_radius(setting_btn, 5, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(setting_btn, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(setting_btn, THEME_COLOR_BG_LIGHT, LV_PART_MAIN);
     lv_obj_set_style_pad_all(setting_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(setting_btn, 1, LV_PART_MAIN);
     lv_obj_t *setting_label = lv_label_create(setting_btn);
     lv_label_set_text(setting_label, LV_SYMBOL_SETTINGS);
     lv_obj_center(setting_label);
-    lv_obj_set_style_text_color(setting_label, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_text_color(setting_label, THEME_COLOR_TEXT_ON_LIGHT, LV_PART_MAIN);
 
     lv_obj_t *section;
     lv_obj_t *sub_rf_setting_page = lv_menu_page_create(menu, NULL);
@@ -450,7 +451,7 @@ void ui_msgchat_enter(lv_obj_t *parent)
         lv_label_set_text(label, hw_get_lora_battery_saver_active()
                                   ? "LoRa is off to save battery"
                                   : "LoRa is off -- enable it in Settings");
-        lv_obj_set_style_text_color(label, lv_color_black(), 0);
+        lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_LIGHT, 0);
         lv_obj_set_width(label, lv_pct(90));
         lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);

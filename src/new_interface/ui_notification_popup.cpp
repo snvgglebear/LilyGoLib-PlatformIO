@@ -66,7 +66,7 @@ static void show_toast(const GbNotification &note)
     lv_obj_set_width(toast, LV_PCT(85));
     lv_obj_set_height(toast, LV_SIZE_CONTENT);
     lv_obj_align(toast, LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_set_style_bg_color(toast, lv_color_hex(0x202020), 0);
+    lv_obj_set_style_bg_color(toast, THEME_COLOR_BG_TOAST, 0);
     lv_obj_set_style_bg_opa(toast, LV_OPA_90, 0);
     lv_obj_set_style_radius(toast, 12, 0);
     lv_obj_set_style_pad_all(toast, 10, 0);
@@ -76,7 +76,7 @@ static void show_toast(const GbNotification &note)
 
     lv_obj_t *title = lv_label_create(toast);
     lv_label_set_text(title, note.title.empty() ? note.src.c_str() : note.title.c_str());
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_color(title, THEME_COLOR_TEXT_ON_DARK, 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_18, 0);
     lv_obj_set_width(title, LV_PCT(100));
 
@@ -89,7 +89,7 @@ static void show_toast(const GbNotification &note)
         lv_obj_t *body_label = lv_label_create(toast);
         lv_label_set_text(body_label, body.c_str());
         lv_label_set_long_mode(body_label, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_text_color(body_label, lv_palette_main(LV_PALETTE_GREY), 0);
+        lv_obj_set_style_text_color(body_label, THEME_COLOR_TEXT_SECONDARY, 0);
         lv_obj_set_width(body_label, LV_PCT(100));
         lv_obj_align_to(body_label, title, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
     }

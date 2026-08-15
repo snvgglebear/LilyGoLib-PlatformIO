@@ -23,6 +23,7 @@
  * @see hal_interface.cpp: hw_sleep(), hw_shutdown(), hw_set_charger_current_level().
  */
 #include "ui_define.h"
+#include "app_config.h"
 
 static lv_obj_t *menu = NULL;
 
@@ -35,7 +36,7 @@ static void event_cb(lv_event_t *e)
     printf("Button %s clicked\n", text);
     if (strcmp(text, "Shutdown") == 0) {
         lv_obj_clean(lv_screen_active());
-        lv_obj_set_style_bg_color(lv_screen_active(), lv_color_black(), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(lv_screen_active(), THEME_COLOR_BG_DARK, LV_PART_MAIN);
         lv_obj_set_style_radius(lv_screen_active(), 0, 0);
 
         LV_IMG_DECLARE(img_poweroff);
@@ -45,7 +46,7 @@ static void event_cb(lv_event_t *e)
 
         lv_obj_t *label = lv_label_create(lv_screen_active());
         lv_label_set_text(label, "Power Off...");
-        lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN);
+        lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_DARK, LV_PART_MAIN);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_18, LV_PART_MAIN);
         lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -30);
 
@@ -91,7 +92,7 @@ void ui_power_enter(lv_obj_t *parent)
     } else {
         lv_obj_set_style_text_font(label, &lv_font_montserrat_24, 0);
     }
-    lv_obj_set_style_text_color(label, lv_color_black(), 0);
+    lv_obj_set_style_text_color(label, THEME_COLOR_TEXT_ON_LIGHT, 0);
     lv_obj_set_width(label, lv_pct(90));
     lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 20);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
