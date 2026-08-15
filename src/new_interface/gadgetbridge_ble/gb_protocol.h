@@ -122,6 +122,10 @@ struct GbSettings {
 
     bool has_low_batt_pct = false;
     int32_t low_batt_pct = 0;           ///< percent; handler clamps to [5, 50]
+
+    bool has_lora_enabled = false;
+    bool lora_enabled = false;          ///< LoRa radio on/off; see hal_interface.h's
+                                         ///< hw_get_lora_enabled()/hw_set_lora_enabled()
 };
 
 /**
@@ -244,4 +248,4 @@ std::string gb_msg_toast(const char *level, const std::string &message);
 /// of which side the change came from.
 std::string gb_msg_settings(int32_t notif_timeout_ms, bool notif_vibrate,
                              uint32_t pinned_mask, const std::string &clock_mode,
-                             int32_t low_batt_pct);
+                             int32_t low_batt_pct, bool lora_enabled);

@@ -349,7 +349,7 @@ void GbApp::sendSettingsEcho()
     GB_LOG("[gb] sending settings echo\n");
     gb_link_send(gb_msg_settings(m_eff_notif_timeout_ms, m_eff_notif_vibrate,
                                  m_eff_pinned_mask, m_eff_clock_mode,
-                                 m_eff_low_batt_pct));
+                                 m_eff_low_batt_pct, m_eff_lora_enabled));
 }
 
 void GbApp::reportNotificationSettings(int32_t timeout_ms, bool vibrate)
@@ -374,6 +374,12 @@ void GbApp::reportClockMode(const std::string &mode)
 void GbApp::reportLowBatteryPercent(int32_t pct)
 {
     m_eff_low_batt_pct = pct;
+    sendSettingsEcho();
+}
+
+void GbApp::reportLoraEnabled(bool enabled)
+{
+    m_eff_lora_enabled = enabled;
     sendSettingsEcho();
 }
 

@@ -337,6 +337,8 @@ typedef struct {
     uint32_t pinned_mask;           ///< bitmask over enum PinnableApp; bits >= PIN_APP_COUNT are masked off
     uint8_t  clock_mode;            ///< ClockMode: CLOCK_MODE_DIGITAL / CLOCK_MODE_ANALOG
     uint8_t  low_batt_pct;          ///< low-battery warning threshold, percent [5,50]
+    uint8_t  lora_enabled;          ///< non-zero to allow the LoRa radio to run at all;
+                                     ///< see hw_get_lora_enabled()/hw_set_lora_enabled()
 } user_setting_params_t;
 
 /**
@@ -640,6 +642,31 @@ void hw_get_radio_params(radio_params_t &params);
  * @brief Set the radio to listening mode.
  */
 void hw_set_radio_listening();
+
+/**
+ * @brief Check whether the LoRa radio is allowed to run at all.
+ *
+ * A persisted, watch-local master switch, independent of whichever LoRa-using
+ * app (ui_radio.cpp, ui_msgchat.cpp) is active. Off by default
+ * (LORA_RADIO_DEFAULT_ENABLED, app_config.h). See
+ * src/new_interface/plans/lora-meshtastic-protocol-interop-plan.md §10.
+ *
+ * @return True if the radio may be configured/keyed up; false if it must
+ *         stay in standby.
+ */
+bool hw_get_lora_enabled();
+
+/**
+ * @brief Enable or disable the LoRa radio, persisting the choice.
+ *
+ * Setting this to false forces the radio into standby immediately (via
+ * hw_set_radio_params() with RADIO_DISABLE) rather than waiting for whichever
+ * app currently owns the radio to notice -- "off" is meant to be immediate
+ * and externally observable, not eventually-consistent.
+ *
+ * @param enabled New state.
+ */
+void hw_set_lora_enabled(bool enabled);
 
 /**
  * @brief Set the radio to default configuration.

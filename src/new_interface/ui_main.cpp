@@ -490,6 +490,7 @@ void setupGui()
     // Each app's `app_t` is defined in its own ui_*.cpp and declared here rather
     // than in a shared header, which keeps the app list in one readable place.
     extern app_t ui_sys_main ;
+    extern void ui_sys_init(void);
     extern app_t ui_radio_main ;
     extern app_t ui_audio_main ;
     extern app_t ui_wireless_main ;
@@ -605,6 +606,7 @@ void setupGui()
     dev_timer = lv_timer_create(hw_device_poll, 5000, NULL);
 
     ui_notification_popup_init();
+    ui_sys_init();
 
     // Allow low power mode
     set_low_power_mode_flag(true);

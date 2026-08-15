@@ -232,6 +232,10 @@ bool gb_protocol_dispatch(const std::string &line, GbProtocolHandler &handler)
             settings.has_low_batt_pct = true;
             settings.low_batt_pct = doc["low_batt_pct"].as<int32_t>();
         }
+        if (doc["lora_enabled"].is<bool>()) {
+            settings.has_lora_enabled = true;
+            settings.lora_enabled = doc["lora_enabled"].as<bool>();
+        }
         handler.onSettings(settings);
 
     } else {
@@ -338,7 +342,7 @@ std::string gb_msg_toast(const char *level, const std::string &message)
 
 std::string gb_msg_settings(int32_t notif_timeout_ms, bool notif_vibrate,
                              uint32_t pinned_mask, const std::string &clock_mode,
-                             int32_t low_batt_pct)
+                             int32_t low_batt_pct, bool lora_enabled)
 {
     JsonDocument doc;
     doc["t"] = "settings";
@@ -347,5 +351,6 @@ std::string gb_msg_settings(int32_t notif_timeout_ms, bool notif_vibrate,
     doc["pinned_mask"] = static_cast<int32_t>(pinned_mask);
     doc["clock_mode"] = clock_mode;
     doc["low_batt_pct"] = low_batt_pct;
+    doc["lora_enabled"] = lora_enabled;
     return serialize(doc);
 }

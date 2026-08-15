@@ -86,6 +86,19 @@ enum PinnableApp {
 #define PINNED_APPS_MAX_VISIBLE   4
 
 // ---------------------------------------------------------------------------
+// LoRa radio on/off
+// ---------------------------------------------------------------------------
+
+/// Whether the LoRa radio (SX1262/SX1280/LR1121/CC1101, whichever is compiled
+/// in) is allowed to run at all, before any per-app configuration. Off by
+/// default -- fail closed, matching this repo's Meshtastic-node regulatory
+/// posture (src/new_interface/plans/lora-meshtastic-protocol-interop-plan.md
+/// §5.6/§10) even before that module exists: ui_radio.cpp and ui_msgchat.cpp
+/// already respect this flag today. See hal_interface.h's
+/// hw_get_lora_enabled()/hw_set_lora_enabled().
+#define LORA_RADIO_DEFAULT_ENABLED   false
+
+// ---------------------------------------------------------------------------
 // Alarms / timer / stopwatch
 // ---------------------------------------------------------------------------
 

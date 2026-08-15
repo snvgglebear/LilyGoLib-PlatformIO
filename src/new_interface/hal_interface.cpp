@@ -936,6 +936,7 @@ void hw_init()
         user_setting.pinned_mask = PINNED_APPS_DEFAULT_MASK;
         user_setting.clock_mode = CLOCK_MODE_DEFAULT;
         user_setting.low_batt_pct = LOW_BATTERY_WARNING_PERCENT;
+        user_setting.lora_enabled = LORA_RADIO_DEFAULT_ENABLED;
         prefs.putBytes(NVS_NAME, &user_setting, sizeof(user_setting_params_t));
     }
 
@@ -968,6 +969,7 @@ void hw_init()
     user_setting.pinned_mask = PINNED_APPS_DEFAULT_MASK;
     user_setting.clock_mode = CLOCK_MODE_DEFAULT;
     user_setting.low_batt_pct = LOW_BATTERY_WARNING_PERCENT;
+    user_setting.lora_enabled = LORA_RADIO_DEFAULT_ENABLED;
 #endif
 
     // #if  defined(USING_ST25R3916) && defined(ARDUINO)
@@ -989,6 +991,7 @@ void hw_get_user_setting(user_setting_params_t &param)
     printf("Get pinned_mask         :%u\n", user_setting.pinned_mask);
     printf("Get clock_mode          :%u\n", user_setting.clock_mode);
     printf("Get low_batt_pct        :%u\n", user_setting.low_batt_pct);
+    printf("Get lora_enabled        :%u\n", user_setting.lora_enabled);
 }
 
 void hw_set_user_setting(user_setting_params_t &param)
@@ -1007,7 +1010,32 @@ void hw_set_user_setting(user_setting_params_t &param)
     printf("set pinned_mask         :%u\n", param.pinned_mask);
     printf("set clock_mode          :%u\n", param.clock_mode);
     printf("set low_batt_pct        :%u\n", param.low_batt_pct);
+    printf("set lora_enabled        :%u\n", param.lora_enabled);
 
+}
+
+bool hw_get_lora_enabled()
+{
+    return user_setting.lora_enabled != 0;
+}
+
+void hw_set_lora_enabled(bool enabled)
+{
+    user_setting.lora_enabled = enabled ? 1 : 0;
+#ifdef ARDUINO
+    prefs.putBytes(NVS_NAME, &user_setting, sizeof(user_setting_params_t));
+#endif
+    if (!enabled) {
+        // Force standby immediately rather than waiting for whichever app owns
+        // the radio to next notice the flag -- "off" is meant to be immediate
+        // and externally observable, not eventually-consistent. Reuses the
+        // existing RADIO_DISABLE path (hw_set_radio_params() -> radio.standby())
+        // rather than duplicating standby logic per radio back end.
+        radio_params_t params;
+        hw_get_radio_params(params);
+        params.mode = RADIO_DISABLE;
+        hw_set_radio_params(params);
+    }
 }
 
 const uint32_t hw_get_disp_timeout_ms()

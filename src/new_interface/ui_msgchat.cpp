@@ -439,11 +439,27 @@ static void msg_chat_receiver_task(lv_timer_t *t)
  */
 void ui_msgchat_enter(lv_obj_t *parent)
 {
+    menu = create_menu(parent, back_event_handler);
+
+    if (!hw_get_lora_enabled()) {
+        lv_obj_t *main_page = lv_menu_page_create(menu, NULL);
+        lv_obj_t *cont = lv_menu_cont_create(main_page);
+        lv_obj_remove_style_all(cont);
+        lv_obj_set_size(cont, lv_pct(100), 80);
+        lv_obj_t *label = lv_label_create(cont);
+        lv_label_set_text(label, "LoRa is off -- enable it in Settings");
+        lv_obj_set_style_text_color(label, lv_color_black(), 0);
+        lv_obj_set_width(label, lv_pct(90));
+        lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_center(label);
+        lv_menu_set_page(menu, main_page);
+        return;
+    }
+
     hw_get_radio_params(radio_params_copy);
     radio_params_copy.mode = RADIO_RX;
     hw_set_radio_params(radio_params_copy);
-
-    menu = create_menu(parent, back_event_handler);
 
     lv_obj_t *sub_mechanics_page = lv_menu_page_create(menu, NULL);
 

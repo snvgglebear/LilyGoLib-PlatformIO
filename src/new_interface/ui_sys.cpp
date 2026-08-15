@@ -24,6 +24,7 @@
  */
 #include "ui_define.h"
 #include "app_config.h"
+#include "app_gadgetbridge.h"
 #include "ui_notification_popup.h"
 
 static lv_obj_t *menu = NULL;
@@ -157,6 +158,19 @@ static void charger_enable_cb(lv_event_t *e)
     }
 }
 
+static void lora_enable_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_obj_t *obj = (lv_obj_t *)lv_event_get_target(e);
+    if (code == LV_EVENT_VALUE_CHANGED) {
+        bool turnOn = lv_obj_has_state(obj, LV_STATE_CHECKED);
+        printf("LoRa enabled: %s\n", turnOn ? "On" : "Off");
+        hw_set_lora_enabled(turnOn);
+        local_param.lora_enabled = turnOn;
+        gb_app.reportLoraEnabled(turnOn);
+    }
+}
+
 static void charger_current_cb(lv_event_t *e)
 {
     lv_obj_t *obj = (lv_obj_t *)lv_event_get_target(e);
@@ -220,6 +234,19 @@ static lv_obj_t *create_subpage_backlight(lv_obj_t *menu, lv_obj_t *main_page)
     lv_label_set_text_fmt(slider_label, "   %uS  ", local_param.disp_timeout_second);
     lv_obj_set_user_data(slider, slider_label);
     lv_group_add_obj(lv_group_get_default(), (slider));
+
+    lv_menu_set_load_page_event(menu, cont, sub_page);
+    return cont;
+}
+
+static lv_obj_t *create_subpage_lora(lv_obj_t *menu, lv_obj_t *main_page)
+{
+    lv_obj_t *cont = lv_menu_cont_create(main_page);
+    lv_obj_t *label = lv_label_create(cont);
+    lv_label_set_text(label, LV_SYMBOL_WIFI" LoRa Radio");
+    lv_obj_t *sub_page = lv_menu_page_create(menu, NULL);
+
+    create_switch(sub_page, LV_SYMBOL_WIFI, "LoRa Enable", hw_get_lora_enabled(), lora_enable_cb);
 
     lv_menu_set_load_page_event(menu, cont, sub_page);
     return cont;
@@ -419,6 +446,9 @@ void ui_sys_enter(lv_obj_t *parent)
     cont = create_subpage_otg(menu, main_page);
     lv_group_add_obj(menu_g, cont);
 
+    cont = create_subpage_lora(menu, main_page);
+    lv_group_add_obj(menu_g, cont);
+
     lv_menu_set_page(menu, main_page);
 
 #ifdef USING_TOUCHPAD
@@ -428,6 +458,35 @@ void ui_sys_enter(lv_obj_t *parent)
 #endif
 }
 
+
+/// GB_CHANGE_SETTINGS listener for `lora_enabled` (protocol §5.14/§6.8). Unlike
+/// the other settings-sync fields, this one has no dedicated owning UI module
+/// with its own persistent screen -- it's a plain hal_interface.h setting --
+/// so ui_sys.cpp, as the file that already owns the on-watch LoRa Enable
+/// switch (create_subpage_lora() above), applies it directly. Registered once
+/// at boot via ui_sys_init(), independent of whether the Settings screen is
+/// ever opened, so a phone-driven change still takes effect.
+static void lora_settings_listener(GbStateChange change)
+{
+    if (change != GB_CHANGE_SETTINGS) {
+        return;
+    }
+    if (!gb_app.settings().has_lora_enabled) {
+        return;
+    }
+    bool enabled = gb_app.settings().lora_enabled;
+    hw_set_lora_enabled(enabled);
+    gb_app.reportLoraEnabled(enabled);
+}
+
+/// Seed GbApp's settings-echo mirror from NVS and register the listener
+/// above. Call once at boot (see ui_main.cpp), before any phone connection is
+/// possible.
+void ui_sys_init(void)
+{
+    gb_app.reportLoraEnabled(hw_get_lora_enabled());
+    app_gb_add_listener(lora_settings_listener);
+}
 
 void ui_sys_exit(lv_obj_t *parent)
 {

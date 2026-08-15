@@ -1,24 +1,46 @@
 # Plan: real Meshtastic protocol interop for the watch
 
+**Revision (2026-08-15):** the recommendation in §4 has been replaced per explicit
+direction from the user: the watch is the Meshtastic **node** — the "bridge" between
+the phone and the LoRa mesh — not a client that pairs with a separate physical node.
+Phone-side management happens through the official Meshtastic app (or any other
+standards-compliant Meshtastic BLE client), as its own separate app — Gadgetbridge is
+not part of this feature at all. This supersedes the original §4's "(a) first, (b)
+later" call; §1-§3 (background research) are unchanged and still accurate as of
+2026-08-15. §4 onward is rewritten below. A new §10 adds the requested persisted LoRa
+radio on/off setting.
+
 **Target:** the `new_interface` branch of this repo (`/workspaces/LilyGoLib-PlatformIO`),
 `src_dir = src/new_interface`. Files that would be added or changed:
 
-- New: `src/new_interface/meshtastic_client/` — a self-contained module (client state
-  machine + BLE-central transport + protobuf codec), analogous in shape to
-  `src/new_interface/gadgetbridge_ble/`.
+- New: `src/new_interface/meshtastic_node/` — a self-contained module (node state
+  machine + a second BLE-peripheral GATT service + protobuf codec + routing/crypto),
+  analogous in shape to `src/new_interface/gadgetbridge_ble/`.
 - New: `src/new_interface/app_meshtastic.h` / `.cpp` — the UI-facing seam, mirroring
   `src/new_interface/app_gadgetbridge.h` / `.cpp`.
 - New: `src/new_interface/ui_meshtastic.cpp` — the launchable app screen(s), registered
-  in `ui_main.cpp` the same way `ui_radio.cpp`/`ui_walkie.cpp` are.
+  in `ui_main.cpp` the same way `ui_radio.cpp`/`ui_walkie.cpp` are. Status/monitor only
+  — see §5.5 for why full configuration UI is deliberately not duplicated here.
 - Changed: `platformio.ini` — add a nanopb code-generation step and its library
   dependency to `env_arduino`/`env_emulator`.
-- Changed (phone side, out of scope for this repo): a new "connect to Meshtastic
-  node" flow would live in the Gadgetbridge fork referenced by CLAUDE.md, **not** in
-  the `TWatchUltraDeviceSupport.java` BLE class — see §6.
+- Changed: `src/new_interface/hal_interface.h`/`.cpp` — new persisted LoRa
+  radio-enabled flag (§10), an additive change consumed by `hw_sx1262.cpp`,
+  `ui_radio.cpp`, `ui_msgchat.cpp`, and the new node module alike.
+- Changed: `src/new_interface/gadgetbridge_ble/gb_ble.cpp`'s neighborhood — the new
+  Meshtastic GATT service is a second service on the *same* NimBLE peripheral
+  Gadgetbridge already runs, not a new BLE role (§4.2).
+- Out of scope, not deferred: any change to the Gadgetbridge Android fork
+  (`TWatchUltraDeviceSupport.java` etc.). The user's own framing is explicit — the
+  phone handles Meshtastic through a different app entirely — so there is nothing
+  for the Gadgetbridge fork to do here. See §7.
 
-No existing file's behaviour changes as a prerequisite for this plan. `hal_interface.h`'s
-raw-radio functions (`hw_set_radio_params()` etc.) and `ui_msgchat.cpp`'s broadcast
-chat are left exactly as they are; §2 explains why this plan does not touch them.
+No existing file's raw-PHY behaviour changes as a prerequisite for this plan, beyond
+the shared radio on/off gate added in §10, which is additive
+(`hw_get_lora_enabled()`/`hw_set_lora_enabled()`, checked by `ui_radio.cpp` and
+`ui_msgchat.cpp` before they key up the radio, same as the new node module).
+`hal_interface.h`'s raw-radio functions (`hw_set_radio_params()` etc.) and
+`ui_msgchat.cpp`'s broadcast chat are otherwise left exactly as they are; §2 explains
+why this plan does not fold Meshtastic into either of them.
 
 This document is planning only. Nothing here has been implemented.
 
@@ -65,15 +87,16 @@ exists instead:
     the one `GbApp::Listener` and dispatches to N independently-registered UI
     listeners (`app_gb_add_listener()`), which is exactly the "decouple gadgetbridge
     from UI setup" requirement in `src/custom_interface/plan.md` line 26.
-  - This is the model this plan follows for `meshtastic_client/`: pure codec, a
-    state-machine class, a swappable transport, and an `app_meshtastic.*` fan-out
+  - This is the model this plan follows for `meshtastic_node/`: pure codec, a
+    state-machine class, a BLE-peripheral transport, and an `app_meshtastic.*` fan-out
     seam — structurally parallel to Gadgetbridge, but a **separate module with its
     own listener**, not a hook into `GbProtocolHandler`. §2.1 explains why the two
     must not merge.
 - **`src/custom_interface/plan.md` line 3** is the origin of this task: "lora/meshtastic
   functionality (primarily managing the connection from the phone, but also
   supporting a bluetooth keyboard.)" — phone-managed connection lifecycle is the
-  explicit ask, not just packet exchange.
+  explicit ask. This revision satisfies it via a standard Meshtastic phone app rather
+  than a Gadgetbridge extension; see §7.
 
 ## 2. Architectural decisions (read before §3–§5)
 
@@ -91,37 +114,39 @@ for reasons specific to what Meshtastic actually is:
   Meshtastic's own protobuf schema (`meshtastic/protobufs` on GitHub — `mesh.proto`,
   `admin.proto`, `channel.proto`, `portnums.proto`, `config.proto`, …), versioned and
   evolved by that upstream project, consumed unmodified by every Meshtastic client
-  (Android app, iOS app, Web, CLI, this watch). Re-encoding `ToRadio`/`FromRadio`
-  protobuf frames as JSON fields inside `{"t":"notify",...}`-style messages would
-  mean maintaining a translation layer against an external, independently-versioned
-  schema forever, and would make this watch unable to talk to a real Meshtastic node
-  without a Gadgetbridge fork in the loop translating for it — defeating "real
-  protocol interop."
-- **The transport identity is different and load-bearing.** Meshtastic's own BLE
-  service UUID (`6ba1b218-15a8-461f-9fa8-5dcae273eafd`, confirmed by the current
+  (Android app, iOS app, Web, CLI). Re-encoding `ToRadio`/`FromRadio` protobuf frames
+  as JSON fields inside `{"t":"notify",...}`-style messages would mean maintaining a
+  translation layer against an external, independently-versioned schema forever, and
+  would make this watch unable to talk to a standard Meshtastic phone app without a
+  Gadgetbridge fork in the loop translating for it — defeating "real protocol
+  interop" and directly contradicting the user's own direction that a *different*
+  app handles this.
+- **The transport identity is the same GATT role as Gadgetbridge, but a second
+  service, not a merged one.** Meshtastic's own BLE service UUID
+  (`6ba1b218-15a8-461f-9fa8-5dcae273eafd`, confirmed by the current
   `meshtastic/firmware` BLE stack and documented at
   <https://meshtastic.org/docs/development/device/client-api/>) is what every
-  Meshtastic-aware client (including a phone running the Meshtastic Android/iOS app,
-  or a standalone puck node) scans for. If the watch is acting as a Meshtastic
-  *client* (§4, option (a)), it needs to be the GATT **central**, connecting *to* a
-  separate node's Meshtastic service — the opposite role from Gadgetbridge, where the
-  watch is the GATT **server** the phone connects to (protocol doc §1: "The watch is
-  the GATT server; the phone connects as client"). These are two independent BLE
-  roles running concurrently on the same radio, not one relationship carrying two
-  payload types.
+  Meshtastic-aware client scans for. Because the watch is now the Meshtastic *node*
+  (§4), it is the GATT **server** for this service too — the same role Gadgetbridge
+  already plays (protocol doc §1: "The watch is the GATT server; the phone connects
+  as client"). That means this is **not** a second BLE role to build (contrast the
+  withdrawn original plan, which had the watch as a BLE *central* pairing outward to
+  someone else's node — see §4.2) — it is a second GATT service hosted by the same
+  NimBLE peripheral. Still two independent things that must coexist correctly
+  (§4.2, §9 risk 1), just a materially smaller integration problem than dual-role
+  central+peripheral would have been.
 - **Different consumer, different lifecycle.** Gadgetbridge messages are consumed by
-  one phone app the watch is bonded to. Meshtastic packets are consumed by (or
-  routed through) a mesh of possibly-unfamiliar nodes with their own identities,
-  channel encryption, and hop-based routing — concepts that have no Gadgetbridge
-  equivalent and would corrupt that protocol's simplicity if forced in.
-
-What *should* cross into Gadgetbridge JSON, if anything: a thin status/control
-surface for the *phone-management UX* the user asked for — e.g. "is the watch
-connected to a Meshtastic node," "here are the last N mesh messages," "send this
-text to the mesh" — as new, clearly-scoped message types, analogous to how
-`android-sms-notifications-plan.md` §3 adds fields to `notify` rather than
-reinventing SMS transport. That is a *phase 3* idea (§7) once the watch↔node
-Meshtastic link itself works, not a substitute for it.
+  one phone app the watch is bonded to for general watch control. Meshtastic packets
+  are consumed by (or routed through) a mesh of possibly-unfamiliar nodes with their
+  own identities, channel encryption, and hop-based routing — concepts that have no
+  Gadgetbridge equivalent and would corrupt that protocol's simplicity if forced in.
+- **Phone-side management is explicitly a different app.** The user's direction
+  removes any ambiguity §2.1 previously had to hedge on ("what should cross into
+  Gadgetbridge JSON, if anything"): nothing should. The Meshtastic app *is* the
+  phone-management UX — connection status, node list, channel/region configuration,
+  messaging — all of it, over the GATT service in §5.3, with zero Gadgetbridge
+  involvement. §7 covers the one small, genuinely optional exception (a cosmetic
+  status mirror) and why it is not part of this plan.
 
 ### 2.2 RadioLib supplies the PHY primitives, not Meshtastic compatibility
 
@@ -142,19 +167,23 @@ defaults that do not match this repo's own defaults (`hw_get_radio_params()` in
 already off from Meshtastic's default `LongFast` preset, and `0xCD` is this repo's
 own private convention, not Meshtastic's `0x2B`/public-mesh sync word). None of that
 table exists in this repo yet; it has to be transcribed from Meshtastic's firmware
-source (`RadioInterface.cpp`/`RegionInfo` tables) as its own work item (§5.3).
+source (`RadioInterface.cpp`/`RegionInfo` tables) as its own work item (§5.4).
 
 **Conclusion: RadioLib is necessary infrastructure (it is confirmed literally the
 same library Meshtastic's firmware itself calls into) but supplies zero Meshtastic
 protocol compatibility on its own.** Everything above the SPI/register layer —
 frequency-plan tables, modem presets, packet structure, encryption, routing — is new
-code regardless of which of the options in §4 gets picked.
+code, and since the watch is now the node itself (not a client deferring that work to
+a paired node, per the withdrawn option (a)), **all of it is in scope**, not just the
+PHY-adjacent parts. §4.1 enumerates this concretely.
 
 ## 3. What "real Meshtastic protocol interop" is, precisely
 
 Verified against Meshtastic's public docs and protobuf repo
 (<https://meshtastic.org/docs/development/device/client-api/>,
-<https://github.com/meshtastic/protobufs>) as of 2026-08-15:
+<https://github.com/meshtastic/protobufs>) as of 2026-08-15. This section is
+role-agnostic — it describes the API a Meshtastic *node* exposes, which is exactly
+what the watch now implements (§4), so no rewrite was needed here beyond this note:
 
 - **Client API (BLE transport).** A Meshtastic node exposes GATT service
   `6ba1b218-15a8-461f-9fa8-5dcae273eafd` with three characteristics: **ToRadio**
@@ -169,7 +198,9 @@ Verified against Meshtastic's public docs and protobuf repo
   handshake), `disconnect`, and a few admin variants. `FromRadio` contains a `oneof`
   of: a received/queued `MeshPacket`, `MyNodeInfo`, `NodeInfo` (one per known mesh
   member), `Config`/`ModuleConfig` sections, `Channel` entries, `config_complete_id`
-  (handshake done), `log_record`, and more.
+  (handshake done), `log_record`, and more. The watch, as the node, is the GATT
+  server implementing all three characteristics; the Meshtastic phone app is the
+  GATT client, exactly as it would be against any standalone hardware node.
 - **MeshPacket.** The over-the-air/over-the-wire unit: `from`/`to` node IDs
   (32-bit, derived from the node's radio MAC), `channel` (an index, not the raw
   PSK), `id`, `hop_limit`/`hop_start` (flood-routing TTL), `want_ack`, `priority`,
@@ -186,22 +217,24 @@ Verified against Meshtastic's public docs and protobuf repo
   stock firmware can decode it. Real channels use a random 16 or 32-byte PSK,
   AES128 or AES256 in CTR mode, keyed per-channel. Getting this wrong (wrong nonce
   construction, wrong key derivation) produces packets the rest of the mesh silently
-  drops rather than an error the watch can detect on its own.
+  drops rather than an error the watch can detect on its own. **This is now the
+  watch's own responsibility** — as the node, it does the en/decryption itself
+  (§4.1 item 3), unlike the withdrawn client-only option which could leave this to a
+  paired node.
 - **Routing.** Managed flood routing: a node retransmits a packet it hears if
   `hop_limit > 0` and it hasn't seen that `(from, id)` pair recently, decrementing
-  `hop_limit` each hop. A full mesh-node implementation needs a dedupe cache and the
-  hop/rebroadcast logic; a pure client (talking to one node over BLE) does not — the
-  node it's paired to does all of that and only ever hands the client packets
-  addressed to it (or broadcasts) plus its own node database.
+  `hop_limit` each hop. **The watch now needs the full mesh-node version of this** —
+  a dedupe cache and the hop/rebroadcast logic — since it is a mesh node, not a pure
+  client sitting behind one (§4.1 item 4).
 - **Regional frequency plans + modem presets.** `config.proto`'s `LoRaConfig`
   encodes a `region` enum (US, EU_868, EU_433, ANZ, CN, JP, …) and a
   `modem_preset` enum (`LONG_FAST`, `LONG_SLOW`, `LONG_MODERATE`, `MEDIUM_SLOW`,
   `MEDIUM_FAST`, `SHORT_SLOW`, `SHORT_FAST`, `SHORT_TURBO`, or a fully custom
   bandwidth/SF/CR); the firmware derives the actual center frequency from the
   region's band edge plus a channel-number-and-slot calculation, and the actual
-  bandwidth/SF/CR from the preset. A node/mesh-node implementation must reproduce
-  both tables exactly to interoperate; a BLE client (option (a) below) does not
-  need either — it never touches the LoRa radio itself.
+  bandwidth/SF/CR from the preset. **The watch needs both tables reproduced exactly**
+  (§4.1 item 2) — this is unavoidable now that it owns the LoRa radio as a mesh
+  node, not something a pure BLE client could skip.
 - **Toolchain: nanopb.** Meshtastic's own firmware compiles its `.proto` files with
   **nanopb** (<https://github.com/nanopb/nanopb>), a protobuf-C generator sized for
   microcontrollers (no STL/exceptions/dynamic allocation required, unlike
@@ -213,103 +246,89 @@ Verified against Meshtastic's public docs and protobuf repo
   matches Meshtastic's own byte-for-byte rather than needing to be independently
   verified against it.
 
-## 4. Client vs. mesh node: the scope decision
+## 4. Scope: the watch is the Meshtastic node, exposed as a BLE peripheral
 
-### Option (a) — BLE client to a separate Meshtastic node
+### 4.0 The decision
 
-The watch pairs, as GATT **central**, to an existing physical Meshtastic node (a
-LilyGo/Heltec/RAK puck, or any device running Meshtastic firmware) and speaks the
-ToRadio/FromRadio/FromNum API described in §3. The watch's own LoRa radio
-(`hw_sx1262.cpp` et al.) is **not used for Meshtastic at all** under this option —
-it stays free for `ui_radio.cpp`/`ui_msgchat.cpp`'s existing raw-PHY use, or could
-even be a different physical module than the paired node's.
+Per explicit user direction: the watch owns the LoRa radio, participates in the mesh
+directly, and exposes the standard Meshtastic BLE client API (§3) as a GATT
+**server** — exactly like a standalone physical Meshtastic node (a LilyGo/Heltec/RAK
+puck) does. This is the "bridge" framing: the watch bridges the LoRa mesh to
+whatever BLE client connects to it, same as any Meshtastic node bridges its mesh to
+the phone app paired with it.
 
-- Scope: implement the `ToRadio`/`FromRadio` protobuf messages actually needed for
-  a *minimal* client (config handshake, receiving `NodeInfo`/`MyNodeInfo`, sending
-  and receiving `TEXT_MESSAGE_APP` packets on one channel) — a small, well-bounded
-  slice of `mesh.proto`, not the whole schema.
-  No routing, no encryption implementation (the paired node does both), no
-  frequency-plan tables.
-  Nanopb toolchain integration is still required (§5.1) — the wire format is
-  protobuf either way — but the *message set* compiled in is small.
-- Requires: the user (or anyone testing this) to own or borrow a second,
-  independent Meshtastic-capable device to pair with. This is a real constraint —
-  it is not a "the watch is now a mesh node out of the box" feature — but it is
-  what "managing the connection from the phone" (the user's own framing in
-  `plan.md`) most directly describes: the phone isn't managing a LoRa mesh
-  connection, it's managing *the watch's BLE connection to a node*, the same
-  relationship shape Gadgetbridge already has with the phone.
-- Estimated effort: **on the order of 1-2 weeks** for a functioning minimal client
-  (config handshake + text messaging + node list), most of it in the nanopb
-  toolchain setup (first-time cost) and the BLE-central connection state machine
-  (NimBLE-Arduino supports central mode, but this repo currently only uses it as a
-  peripheral in `gb_ble.cpp` — connecting *out* to another device, scanning,
-  bonding, and handling a second concurrent BLE role alongside Gadgetbridge's own
-  peripheral role, is new ground here and the main integration risk).
+The phone does not get a Gadgetbridge feature for this. The user pairs the *official*
+Meshtastic Android/iOS app (or any other standards-compliant Meshtastic BLE client)
+directly to the watch, the same way they would pair it to a standalone node — that
+app already implements the full node-configuration and messaging UX Meshtastic users
+expect; duplicating any of it in Gadgetbridge or in this watch's own UI would be
+redundant work maintained against a moving upstream target for no benefit. §7 covers
+what (if anything) still touches Gadgetbridge.
 
-### Option (b) — the watch itself becomes a Meshtastic mesh node
+This corresponds to "option (b)" in the pre-revision version of this plan, which had
+recommended starting with a smaller "option (a)" (BLE-central client to a *separate*
+node) first and deferring full node behavior indefinitely. That recommendation is
+withdrawn: a client-to-a-separate-node watch is not a bridge, and does not match what
+was asked for.
 
-The watch's onboard LoRa radio runs full Meshtastic-compatible mesh firmware: real
-packet TX/RX at the correct region/preset-derived PHY settings, channel AES
-encryption/decryption, flood routing with hop-limit and dedupe, and a live node
-database built from overheard `NodeInfo` broadcasts. No second device is needed —
-the watch *is* a full participant other Meshtastic nodes and apps can see and talk
-to directly over LoRa.
+### 4.1 What this requires (full mesh-node scope, all in scope now)
 
-Concrete scope, each a substantial task on its own:
-
-1. Nanopb toolchain integration (§5.1) — same as option (a), but now compiling in
-   the *entire* relevant schema (`mesh.proto`, `channel.proto`, `config.proto`,
-   `portnums.proto`, `admin.proto`), not a minimal slice.
-2. Regional frequency-plan + modem-preset tables (§5.3), transcribed from
+1. **Nanopb toolchain (§5.1)**, compiling the full relevant schema — `mesh.proto`,
+   `channel.proto`, `config.proto`, `module_config.proto`, `portnums.proto`,
+   `admin.proto`. The Meshtastic app configures a node's region, channel PSK, and
+   modem preset through `config.proto`/`channel.proto`/`admin.proto` over this same
+   BLE link — a node that doesn't handle those can't be onboarded from the app the
+   normal way, so this is not the reduced schema slice a pure client could get away
+   with.
+2. **Regional frequency-plan + modem-preset tables** (§5.4), transcribed from
    Meshtastic firmware source and kept in sync as upstream adds regions/presets.
-3. AES-CTR channel encryption/decryption per packet, with correct nonce
+3. **AES-CTR channel encryption/decryption** per packet, with correct nonce
    construction matching Meshtastic's own (`packet_id` + `from` node ID) — a
-   mismatch here doesn't error, it silently produces mesh traffic no other node
-   can read, which is a difficult-to-debug failure mode.
-4. Flood-routing implementation: hop-limit decrement, a seen-packet dedupe cache
+   mismatch here doesn't error, it silently produces mesh traffic no other node can
+   read, a difficult-to-debug failure mode.
+4. **Flood-routing implementation:** hop-limit decrement, a seen-packet dedupe cache
    sized against real mesh traffic volumes, rebroadcast timing/jitter to avoid
-   collision storms — Meshtastic's own firmware has years of tuning here that a
-   from-scratch implementation would not start with.
-5. A live node database (`NodeInfo` ingestion, position/telemetry handling if
-   supported) and the node-identity/key-management story (Meshtastic's own nodes
-   generate a persistent public/private identity; a from-scratch implementation
-   needs to decide whether to reproduce that or omit it, with device-list-UI and
-   security implications either way).
-6. Regulatory correctness: transmitting on the *wrong* frequency-plan-derived
-   channel, or with the wrong duty cycle/power limits for the selected region, is
-   the user's legal responsibility once the firmware makes it easy to get wrong —
-   this needs explicit region selection UI and defaults that fail closed (no TX
-   until a region is chosen), mirroring how Meshtastic's own onboarding forces a
-   region pick before the radio keys up.
+   collision storms.
+5. **A live node database** (`NodeInfo` ingestion, position/telemetry handling if
+   supported) and **node identity/key management** — Meshtastic nodes generate a
+   persistent public/private identity; this needs the same, stored safely (§9 risk
+   6 covers the security ceiling of storing it in NVS).
+6. **Regulatory-safe defaults:** no TX until a region is explicitly selected,
+   mirroring Meshtastic's own onboarding. §10's radio on/off setting is a strictly
+   coarser, always-available version of the same fail-closed idea — §10.4 explains
+   how the two relate.
 
-Estimated effort: **genuinely comparable to porting a meaningful slice of the
-Meshtastic firmware itself — realistically several weeks to a few months** of
-focused work to reach parity with a real Meshtastic node's basic behavior, plus
-ongoing maintenance to track upstream protocol/preset changes. This is not "a
-feature you add to a watch app," it's closer to embedding a second firmware
-project.
+**Estimated effort is unchanged from the pre-revision plan's option (b) figure:
+realistically several weeks to a few months** of focused work to reach parity with a
+real Meshtastic node's basic behavior, plus ongoing maintenance to track upstream
+protocol/preset changes. This plan does not shrink that estimate — it removes the
+smaller "(a) first" milestone that used to sit in front of it, since a client to a
+separate node was never what was asked for.
 
-### Recommendation: start with (a), keep (b) as an explicitly separate, later phase
+### 4.2 What gets simpler: no BLE-central role needed
 
-Do **(a)** first. It is a real, working, useful, honestly-scoped deliverable —
-the watch talks genuine Meshtastic protocol to genuine Meshtastic hardware — sized
-appropriately for "plan the next feature," not "start a second firmware project."
-It also directly matches the user's own framing in `plan.md` ("managing the
-*connection*," singular, from the phone) rather than the much larger claim of
-"the watch joins a self-managed mesh."
+The pre-revision plan's top-flagged risk — "NimBLE central + peripheral concurrency
+is unproven in this codebase" — no longer applies in that form. Because the watch is
+the GATT *server* (not a client connecting out to someone else's node), the
+Meshtastic service is a **second GATT service on the existing peripheral role**, not
+a second BLE *role*. `gb_ble.cpp` already proves the peripheral pattern (NUS server);
+the Meshtastic service (ToRadio/FromRadio/FromNum, §3) is a second service alongside
+it, both hosted by the one NimBLE GATT server already running. No scanning, no
+central-mode connection state machine, no bonding-as-client logic is needed anywhere
+in this plan.
 
-Do **not** promise (b) as part of the same effort. If full mesh-node capability
-is wanted later, it is worth scoping as its own dedicated plan document once (a)
-has shipped and there's a working nanopb/protobuf toolchain and BLE-central
-plumbing to build on — most of §5's toolchain work (item 1) is shared between the
-two options, so (a) is not wasted effort if (b) is pursued afterward.
+What replaces it as the real open question (§9 risk 1): whether the ESP32-S3 BLE
+controller and NimBLE-Arduino's peripheral role can hold **two independent
+concurrent central connections** at once — the phone's Gadgetbridge fork on one link,
+and whatever device is running the Meshtastic app on the other (which will often be
+the *same* physical phone, just a second app and a second BLE connection to the same
+watch). Multi-connection peripherals are common and the ESP32-S3 controller supports
+multiple simultaneous links (typically configurable up to
+`CONFIG_BT_NIMBLE_MAX_CONNECTIONS`), so this is much better-precedented than the
+dual-role question it replaces — but it is still unverified in this codebase
+specifically and stays a real risk to spike early (§6 step 3).
 
-(c) (a Gadgetbridge-protocol status/control surface layered on top) is worth
-doing, but as a thin addition *after* (a) works end-to-end — see §7. It is not an
-alternative to (a)/(b), it's a phone-UX layer on top of whichever of them exists.
-
-## 5. Work items (all for option (a), the recommended first milestone)
+## 5. Work items
 
 ### 5.1 Nanopb toolchain integration
 
@@ -323,11 +342,11 @@ codegen step:
 - Add a PlatformIO `extra_scripts` pre-build step (mirroring `support/sdl2_paths.py`
   /`support/sdl2_build_extra.py`'s existing pattern of Python helpers invoked from
   `platformio.ini`) that runs nanopb's `generator/nanopb_generator.py` (or the
-  `protoc --nanopb_out=...` form) over the subset of `.proto` files pulled in
-  (§5.2) and drops the generated `.pb.c`/`.pb.h` pairs somewhere under
-  `src/new_interface/meshtastic_client/generated/` (git-ignored, regenerated at
-  build time — matches how `.pio/libdeps` itself is not vendored, per this repo's
-  existing "most libraries pulled via `lib_deps`, not vendored" convention noted in
+  `protoc --nanopb_out=...` form) over the full schema pulled in (§5.2) and drops the
+  generated `.pb.c`/`.pb.h` pairs somewhere under
+  `src/new_interface/meshtastic_node/generated/` (git-ignored, regenerated at build
+  time — matches how `.pio/libdeps` itself is not vendored, per this repo's existing
+  "most libraries pulled via `lib_deps`, not vendored" convention noted in
   CLAUDE.md).
 - Each `.proto` needs a matching `.options` file (nanopb's mechanism for bounding
   otherwise-unbounded `repeated`/`bytes`/`string` fields to fixed-size C arrays,
@@ -340,132 +359,170 @@ codegen step:
   against it, and validate it first in the `emulator_watch_ultra` env where
   iteration is fast.
 
-### 5.2 Minimal protobuf message set for a client
+### 5.2 Protobuf message set: the full node-relevant schema
 
-Pull in only the `.proto` files (and only the messages within them) a minimal
-client actually round-trips:
+Unlike a pure client, a real node needs to round-trip the schema the Meshtastic app
+uses to onboard and drive any node it connects to:
 
 - `mesh.proto` — `ToRadio`, `FromRadio`, `MeshPacket`, `Data`, `MyNodeInfo`,
-  `NodeInfo`, `User` (node's display name/short name — needed to show anything
-  human-readable about mesh peers).
-- `portnums.proto` — at minimum the `PortNum` enum, to recognize
-  `TEXT_MESSAGE_APP` vs. everything else (everything else can be received and
-  ignored/logged in this minimal client).
-- `channel.proto` — `Channel`, enough to read the config handshake's channel list
-  (needed to know which channel index to send on) — **not** the PSK/crypto path,
-  since encryption for TX/RX in option (a) never has to be reasoned about by this
-  code — the paired node does en/decryption before/after the BLE hop entirely.
-- Explicitly deferred: `admin.proto` (remote node configuration — not needed to
-  just talk on the mesh), `config.proto`/`module_config.proto` (device settings —
-  only needed if this client will ever *configure* the paired node, which is out
-  of scope for a first milestone), telemetry/position portnums (defer until text
-  messaging works).
+  `NodeInfo`, `User` (node's display name/short name); `Position`/`Telemetry` once
+  those payload types are prioritized (the envelope handles them regardless — this
+  is about when to build UI/logic for their *contents*, not the framing).
+- `portnums.proto` — the full `PortNum` enum, so the node can recognize/route ports
+  it doesn't render UI for, not just `TEXT_MESSAGE_APP`.
+- `channel.proto` — `Channel`, **including the PSK field this time**. Unlike the
+  pre-revision client-only plan (which could defer crypto to a paired node), the
+  watch is now the node doing the en/decryption itself (§4.1 item 3), so it needs
+  the real channel/key config, not just the channel list.
+- `config.proto` / `module_config.proto` — `LoRaConfig` (region, modem_preset) and
+  the other `Config` sections the Meshtastic app edits via the admin channel.
+- `admin.proto` — `AdminMessage` (remote configuration). The Meshtastic app
+  configures a freshly-added node primarily through admin messages over this same
+  BLE link, not a separate mechanism, so this is required for the app to be able to
+  onboard the watch the normal way — not an optional extra.
 
-### 5.3 BLE-central transport (new ground for this repo)
+### 5.3 Second peripheral GATT service (not BLE-central)
 
-`gb_ble.cpp` only demonstrates the peripheral (GATT server) role. This work item
-is: scan for the Meshtastic service UUID, connect as central, discover
-ToRadio/FromRadio/FromNum, subscribe to FromNum's notifications, and drive the
-write-then-drain-on-notify request/response cycle the client API expects. Check
-early whether NimBLE-Arduino (already a `lib_deps` entry per CLAUDE.md) can run
-central and peripheral roles concurrently on this chip/stack without conflict,
-since Gadgetbridge's own peripheral role (§2.1) needs to keep working
-simultaneously — this is a real open risk, flagged again in §6.
+`gb_ble.cpp` demonstrates the peripheral (GATT server) pattern this reuses directly:
+add a second NimBLE service (UUID `6ba1b218-15a8-461f-9fa8-5dcae273eafd`) with its
+three characteristics (ToRadio/FromRadio/FromNum, §3) to the same NimBLE server
+Gadgetbridge's NUS/DIS/Battery services already run on. This is new *service*
+plumbing, not a new BLE *role* — see §4.2 for why that distinction matters. The one
+thing to verify early (§6 step 3, §9 risk 1) is that the controller/stack accepts a
+second independent central connection (the Meshtastic app) concurrently with
+Gadgetbridge's own connection, since both are now separate centrals talking to the
+same peripheral.
 
-### 5.4 `meshtastic_client/` module shape (mirrors `gadgetbridge_ble/`)
+### 5.4 `meshtastic_node/` module shape (mirrors `gadgetbridge_ble/`)
 
 - `mtc_protocol.*` — pure protobuf encode/decode around the nanopb-generated
   structs; no BLE/LVGL dependency, compiles for hardware and emulator.
-- `mtc_client.*` (`MeshtasticClient`) — the state machine: connection lifecycle
-  (disconnected → scanning → connecting → config handshake →
-  ready), node database, message send/receive, exposed via accessors plus a
-  listener callback, same shape as `GbApp`/`GbStateChange`.
-- `mtc_ble.cpp` — the NimBLE-central transport implementing §5.3.
-- A native/emulator stand-in transport (mirroring `gb_link_stdio.cpp`) so the
-  client state machine and UI are exercisable in `emulator_watch_ultra` without
-  real BLE hardware or a real Meshtastic node — e.g. reading canned
-  `FromRadio` byte sequences from stdin/a fixture file. This is explicitly called
-  out because CLAUDE.md's project-wide convention (and `plan.md`'s own "make as
-  much as possible runnable/testable in the simulator" instruction) both expect it.
+- `mtc_node.*` (`MeshtasticNode`) — the state machine: radio bring-up (gated on
+  §10's enable flag) → region/preset configuration → channel/key state → routing →
+  ready. Owns the node database and identity, exposed via accessors plus a listener
+  callback, same shape as `GbApp`/`GbStateChange`.
+- `mtc_ble.cpp` — the second NimBLE peripheral service implementing §5.3. Not a
+  central/scanning transport.
+- `mtc_radio.*` — a thin adapter translating Meshtastic's `region`+`modem_preset`
+  into the fields `hw_set_radio_params()` (`hal_interface.h`) already accepts. This
+  reuses `hw_sx1262.cpp`'s existing driver rather than replacing it —
+  `ui_radio.cpp`/`ui_msgchat.cpp` keep working exactly as they do today, coordinated
+  with this module only through §10's shared radio-enable flag (whichever app is
+  using the radio, the on/off setting gates all of them equally).
+- Crypto (§4.1 item 3) and routing/dedupe (§4.1 item 4) as their own internal
+  components of `mtc_node.*` or split out if they grow large enough to warrant it.
+- Node database + identity/key persistence: a small NVS namespace of its own
+  (mirroring `hal_interface.cpp`'s existing `Preferences`-backed pattern for
+  `user_setting_params_t`, but **not** the same `"pager"` blob — a node identity key
+  is not a user setting and should not share a struct/migration path with one).
+- A native/emulator stand-in transport (mirroring `gb_link_stdio.cpp`) so the node
+  state machine and UI are exercisable in `emulator_watch_ultra` without real BLE
+  hardware or a real Meshtastic app — e.g. reading canned `ToRadio` byte sequences
+  from stdin/a fixture file and writing `FromRadio` responses to stdout. This is
+  explicitly called out because CLAUDE.md's project-wide convention (and `plan.md`'s
+  own "make as much as possible runnable/testable in the simulator" instruction)
+  both expect it.
 
-### 5.5 `app_meshtastic.*` + `ui_meshtastic.cpp`
+### 5.5 `app_meshtastic.*` + `ui_meshtastic.cpp` — status UI only
 
 Mirrors `app_gadgetbridge.h`/`.cpp` and a `ui_*.cpp` app: `app_meshtastic.cpp` owns
-the one `MeshtasticClient::Listener` and fans it out; `ui_meshtastic.cpp` is a new
+the one `MeshtasticNode::Listener` and fans it out; `ui_meshtastic.cpp` is a new
 launchable `app_t` (registered in `ui_main.cpp` the same way `ui_radio.cpp` is)
-showing connection status, the node list, and a minimal text-message view. "Managing
-the connection from the phone" (§0) is a *later* addition on top of this — see §7 —
-this item is the on-watch UI only.
+showing node status (enabled/disabled, region set or not, BLE connection state), the
+node list, and a minimal text-message view.
+
+**Deliberately not a configuration UI.** Region selection, channel/PSK editing, and
+full mesh management belong to the Meshtastic app on the phone — duplicating that
+here would mean maintaining a second, watch-constrained copy of settings the
+official app already does well, permanently out of sync with upstream Meshtastic UX
+changes. The one exception is the LoRa on/off switch itself (§10.3), which is a
+watch-local hardware control, not a Meshtastic protocol setting, and belongs in this
+app's Settings screen regardless of what any phone app can reach.
+
+### 5.6 Regulatory-safe defaults & region selection
+
+No TX until the node has an explicit region set — mirrors Meshtastic's own
+onboarding, where the app forces a region pick before the radio keys up. Practically:
+ship with §10's LoRa-enabled flag defaulted to **off**, and additionally refuse to
+leave standby once enabled until `LoRaConfig.region` (set via the admin channel from
+the Meshtastic app, §5.2) is something other than `UNSET`. §10.4 covers how the
+always-available on/off switch and this narrower, config-dependent gate relate.
 
 ## 6. Order of work
 
-1. **§5.1** nanopb toolchain — prove a round-trip encode/decode of one trivial
+1. **§10 first** (persisted LoRa radio on/off setting) — small, independently
+   useful on its own, and several later items (§5.6's gating, §5.4's radio bring-up)
+   depend on the flag already existing.
+2. **§5.1** nanopb toolchain — prove a round-trip encode/decode of one trivial
    message compiles and runs correctly in `emulator_watch_ultra` before anything
-   else. This is the highest-uncertainty item and blocks everything downstream.
-2. **§5.3** BLE-central proof of concept — confirm NimBLE-Arduino can scan +
-   connect as central on this hardware, and confirm it can coexist with
-   Gadgetbridge's peripheral role if both need to run at once (§6/risks). If they
-   cannot coexist, that changes the whole design (see risk below) and should be
-   discovered before §5.2/§5.4 are built out.
-3. **§5.2** pull in the minimal proto subset + `.options` files, generate, confirm
-   the generated structs match what Meshtastic's own client API examples show on
-   the wire (cross-check against `meshtastic-python`'s BLE interface output if
-   possible, since it's a working reference implementation of the same client API).
-4. **§5.4** `meshtastic_client/` module: connection state machine + config
-   handshake + text-message send/receive, tested against a real Meshtastic node.
-5. **§5.5** on-watch UI.
-6. Phone-management layer (§7) as a follow-up phase, once 1-5 are solid.
-7. Update `.claude/twatch-ultra-ble-protocol.md` only if/when §7 adds Gadgetbridge
-   message types — nothing before that touches the Gadgetbridge contract.
+   else. Highest-uncertainty item, blocks everything downstream.
+3. **§5.3** second-peripheral-service proof of concept — confirm the watch can hold
+   two independent concurrent BLE central connections (a Gadgetbridge test client
+   plus a second, Meshtastic-service-only test client) before building the rest. If
+   this fails or is unstable, it changes the whole design (§9 risk 1) and should be
+   discovered here, not after §5.4 is built out.
+4. **§5.2** pull in the full proto subset + `.options` files, generate, confirm the
+   generated structs match what Meshtastic's own client API examples show on the
+   wire (cross-check against `meshtastic-python`'s BLE interface output, or a real
+   node's own byte stream, if possible).
+5. **§5.4** `meshtastic_node/` module: radio bring-up (gated on §10) → config
+   handshake → channel crypto → routing → node database, tested against the real
+   Meshtastic phone app and, ideally, a real second Meshtastic node to confirm actual
+   mesh interop (not just a watch↔phone round trip).
+6. **§5.6** regulatory defaults, once region config (part of §5.2/§5.4) exists to
+   enforce against.
+7. **§5.5** on-watch status UI.
+8. Update `.claude/twatch-ultra-ble-protocol.md` only if §10.3's phone-syncable
+   on/off flag is added to the `settings` message — see the companion edit to
+   `watch-settings-sync-protocol-plan.md`. Nothing else in this plan touches the
+   Gadgetbridge contract.
 
-## 7. Phase 2 (not in this milestone): phone-managed connection
+## 7. Phone-side management: a separate app, not Gadgetbridge
 
-Once the watch↔node client (option (a)) works stand-alone, "managing the connection
-from the phone" — the user's explicit ask — is naturally a **new, small set of
-Gadgetbridge message types** (§2.1's exception), since the phone already has a
-channel to the watch and that's the right place for "which node to connect to,"
-"connection status," and "send this text to the mesh" to live. Sketch (not a
-commitment — write this up properly as its own addition, following
-`android-sms-notifications-plan.md`'s §3 format, once phase 1 is real):
+Per the user's direction, "managing the connection from the phone" (the original ask
+in `src/custom_interface/plan.md`) is satisfied by the official Meshtastic app (or
+any standards-compliant Meshtastic BLE client) talking directly to the watch's new
+GATT service from §5.3 — the same way it talks to any other Meshtastic node. **No
+Gadgetbridge fork changes are needed for this feature.** The pre-revision plan's §7
+("Phase 2: phone-managed connection" as new Gadgetbridge message types) is
+withdrawn in full — that design existed only because the earlier plan assumed the
+phone would manage the connection *through* Gadgetbridge; it doesn't.
 
-- Watch → phone: `meshstatus` (connected node id/name, link state).
-- Phone → watch: `meshconnect` (target node's BLE address, if the phone did the
-  scanning) or a simple `meshtoggle` if the watch does its own scanning and the
-  phone only starts/stops it.
-- Watch → phone: `meshmsg` (a received mesh text message, forwarded for display
-  in Gadgetbridge itself as an alternate transport — genuinely new territory for
-  Gadgetbridge, flag as needing upstream Android-side design too, per
-  `plan.md`'s "any parts of this implementation that need to be done in
-  gadgetbridge app should have an implementation plan written up").
+One small, genuinely optional idea if wanted later, kept explicitly separate from
+this plan: a cosmetic Gadgetbridge status mirror ("mesh node: on/off," surfaced
+through the `lora_enabled` field §10.3 already adds to the general settings-sync
+mechanism) — since that field is watch-local hardware state, not a Meshtastic
+protocol concept, showing it in the general Gadgetbridge settings screen doesn't
+reintroduce any of the reasons §2.1/§7 keep Meshtastic itself out of that protocol.
+This is not required for Meshtastic to work and should not be scoped as part of this
+plan; it would be its own small addition to `watch-settings-sync-protocol-plan.md`
+if ever wanted.
 
-This phase needs its own plan document when it's time; not fleshed out further
-here so this document stays focused on the LoRa/Meshtastic side.
-
-## 8. Test matrix (option (a), once built)
+## 8. Test matrix (§4-§5, once built)
 
 | Case | Expected |
 | --- | --- |
-| Scan with no Meshtastic node in range | UI shows "not found," no crash, retries or times out cleanly |
-| Scan finds a node, connect | Config handshake completes (`config_complete_id` received), node's `MyNodeInfo`/own `User` shown |
-| Node has multiple channels configured | Client reads the channel list; UI lets the user pick which channel to send on (or defaults to primary/index 0) |
-| Send a text message | Arrives at another real Meshtastic client (phone app, second node) as a normal `TEXT_MESSAGE_APP` packet — this is the actual interop proof, not just a watch-side round trip |
-| Receive a text message from the mesh | Shows up on the watch attributed to the sending node's name |
-| Node goes out of BLE range mid-session | Client detects disconnect, UI reflects it, reconnect is possible without a firmware restart |
-| Paired node reboots | Client re-handshakes cleanly on reconnect, does not accumulate stale node-database entries indefinitely |
-| Malformed/unexpected `FromRadio` frame | Dropped without crashing the parser, mirroring Gadgetbridge protocol's "malformed JSON drops that line only" resilience posture |
-| Two BLE roles at once (Meshtastic central + Gadgetbridge peripheral) | Both stay functional concurrently, or the plan is revised — see §9 risk 1 |
-| `emulator_watch_ultra` with the stdin/fixture transport (§5.4) | Client state machine and UI are exercisable without hardware, per this repo's simulator-first convention |
+| LoRa disabled in Settings (§10), Meshtastic app tries to connect | BLE service is still discoverable (or not advertised at all — an implementation choice, §10.2), but the node refuses to leave standby / shows "LoRa is off" rather than silently failing |
+| LoRa enabled, region unset | Node completes the BLE config handshake and is configurable, but will not transmit (§5.6) until a region is set from the app |
+| Region set, single channel (Default, PSK `0x01`) | Node joins the mesh at LongFast defaults; a real Meshtastic node/app can see it, exchange `TEXT_MESSAGE_APP` packets |
+| Region set, custom channel with random PSK | Node correctly encrypts/decrypts against that channel; a mismatched PSK on the far end produces silently-dropped packets, not a watch-side error (expected per §3) |
+| Two concurrent peripheral connections: Gadgetbridge fork + Meshtastic app | Both stay functional at once, or the plan is revised — see §9 risk 1 |
+| Node goes out of range of other mesh members | No crash; node database entries age out or are marked stale rather than accumulating indefinitely |
+| Malformed/unexpected `ToRadio` frame from the phone app | Dropped without crashing the parser, mirroring Gadgetbridge protocol's "malformed JSON drops that line only" resilience posture |
+| Send a text message from the watch | Arrives at a real Meshtastic client (phone app, second node) as a normal `TEXT_MESSAGE_APP` packet — the actual interop proof |
+| Receive a text message from the mesh | Shows up in the Meshtastic app (primary) and on the watch's own status UI (§5.5), attributed to the sending node |
+| Toggle LoRa off while the node is mid-mesh (relaying for others) | Radio goes to standby immediately (§10.2); watch drops off the mesh from other nodes' point of view, same as physically powering off a node (§10.4) — expected, not a bug |
+| `emulator_watch_ultra` with the stdin/fixture transport (§5.4) | Node state machine and UI are exercisable without hardware, per this repo's simulator-first convention |
 
 ## 9. Risks
 
-1. **NimBLE central + peripheral concurrency is unproven in this codebase.**
-   Everything BLE-related here today (`gb_ble.cpp`) is peripheral-only. If
-   NimBLE-Arduino cannot run both roles at once on this chip/stack (or can, but
-   with real throughput/stability costs), the watch cannot be simultaneously
-   paired to the phone (Gadgetbridge) and to a Meshtastic node (this plan) without
-   further design — e.g. time-slicing the radio, or accepting that Meshtastic
-   mode and Gadgetbridge mode are mutually exclusive on this firmware. Resolve
-   this with a spike (§6 item 2) before committing to the rest of the design.
+1. **Two concurrent BLE central connections to one peripheral is unverified in this
+   codebase.** Lower risk than the pre-revision plan's dual-role concern (§4.2), but
+   still unproven here specifically: the phone's Gadgetbridge fork and whatever runs
+   the Meshtastic app need independent, simultaneous connections to the same NimBLE
+   peripheral. Spike this first (§6 step 3) before committing to the rest of the
+   design; if the controller/stack can't sustain both, the fallback (advertise only
+   one service at a time, user picks a mode) needs its own design pass.
 2. **Nanopb `.options` field-size choices are a real design decision, not
    boilerplate.** Undersized `repeated`/`bytes` bounds silently truncate; oversized
    ones waste the watch's limited RAM. Start from Meshtastic firmware's own
@@ -476,17 +533,103 @@ here so this document stays focused on the LoRa/Meshtastic side.
    <https://github.com/meshtastic/protobufs> and
    <https://meshtastic.org/docs/development/device/client-api/> at implementation
    time, not trusted indefinitely from this document.
-4. **Scope creep toward option (b).** Once text messaging over a paired node
-   works, "just add the LoRa radio directly" will look like a small step. It is
-   not — §4 quantifies why. Treat it as a separate, later plan with its own
-   go/no-go, not a natural continuation to fold into this milestone's cleanup.
-5. **RadioLib version drift.** This plan's §2.2 findings are against the vendored
-   7.1.2; a `lib_deps` bump could change what RadioLib does or doesn't expose
-   without this plan being revisited. Since option (a) doesn't touch the LoRa
-   radio at all, this mainly matters if/when option (b) is scoped.
-6. **No second Meshtastic device to test against, in-repo.** Unlike Gadgetbridge
-   (which has a fork of the actual Android app to test with, per CLAUDE.md), this
-   plan has no equivalent "known-good other end" documented in this repo. Testing
-   needs a real Meshtastic node (or the `meshtastic-python` CLI, which can run
-   client-API-only against a node for reference/comparison) — budget for acquiring
-   or borrowing one before implementation starts, not after.
+4. **RadioLib version drift.** §2.2's findings are against the vendored 7.1.2; a
+   `lib_deps` bump could change what RadioLib does or doesn't expose without this
+   plan being revisited — now more load-bearing than before, since the watch's own
+   radio bring-up (§5.4's `mtc_radio.*`) depends on it directly rather than the
+   (withdrawn) client option's ability to skip PHY work entirely.
+5. **No reference node in-repo, but a well-known external reference exists.**
+   Unlike Gadgetbridge (which has a fork of the actual Android app to test with, per
+   CLAUDE.md), this plan has no equivalent "known-good other end" checked into this
+   repo. Testing needs the real Meshtastic phone app plus, ideally, a second real
+   Meshtastic node to confirm genuine mesh interop (not just a watch↔phone round
+   trip); `meshtastic-python` (CLI, works against any node's client API) is useful
+   for byte-level cross-checking during development. Budget for acquiring one before
+   implementation starts on §5.4, not after.
+6. **Node identity/key persistence is a real security surface now.** Because the
+   watch is the node (not a client deferring identity to a paired device), its
+   private key lives in the watch's own NVS (§5.4). Physical access to the watch is
+   access to that identity, the same ceiling any physical Meshtastic node hardware
+   already has — not a new weakness introduced by this plan, but worth stating
+   explicitly since the pre-revision client-only design wouldn't have had this
+   concern at all.
+7. **Scope is now fixed at full mesh-node behavior; there is no smaller fallback
+   milestone.** The pre-revision plan's "(a) first" gave an earlier, smaller
+   shippable point. That option is withdrawn because it doesn't match what was
+   asked for (§4.0), so §4.1's full list is the actual first milestone — plan
+   schedule/expectations accordingly; §5.1-§5.4 is the section that has to land
+   before anything is demoable against a real Meshtastic app.
+
+## 10. New: persisted LoRa radio on/off setting
+
+### 10.1 What it controls
+
+A single, persisted "LoRa radio enabled" flag that gates every consumer of the
+SX1262 radio in this app — the existing raw-PHY test app (`ui_radio.cpp`), the
+existing broadcast chat (`ui_msgchat.cpp`), and the new Meshtastic node module
+(§5.4) alike. When off, the radio is put to (and kept in) RadioLib
+`standby()`/sleep and none of those three call sites are allowed to key it up. This
+is the "antenna off" the user asked for: a hard, watch-local override, independent
+of which LoRa-using app is open, and a coarser control than §5.6's node-specific
+region gating (region-unset blocks the *Meshtastic node* from transmitting; this
+flag blocks the *radio* entirely, for any of the three consumers — see §10.4).
+
+### 10.2 Where it lives
+
+Follows the existing `user_setting_params_t` pattern (`hal_interface.h`/`.cpp`,
+NVS-backed under the `"pager"` namespace — see
+`watch-settings-sync-protocol-plan.md` §4 for the precedent) rather than
+`RTC_DATA_ATTR` — silently losing "the user explicitly turned the radio off" on a
+power cycle is the wrong default for what is partly a regulatory/privacy control,
+not just a UI convenience.
+
+- New field: `bool lora_enabled` in `user_setting_params_t`, defaulting to
+  **false** (§5.6's "fail closed" reasoning applies here too — ship with the radio
+  off until the user turns it on, not just until a region is separately picked).
+- New accessor pair in `hal_interface.h`/`.cpp`: `hw_get_lora_enabled()` /
+  `hw_set_lora_enabled(bool)`, following the shape of the existing settings
+  getters/setters. `hw_set_lora_enabled(false)` should force an immediate
+  `radio.standby()` (or a deeper RadioLib sleep mode, if the SX1262 back end
+  already in use exposes one) rather than waiting for the next radio-owning app to
+  notice — "off" should be immediate and externally observable (e.g. on an SDR),
+  not eventually-consistent.
+- `ui_radio.cpp`, `ui_msgchat.cpp`, and `meshtastic_node/mtc_node.*` (§5.4) each
+  check `hw_get_lora_enabled()` before calling into `hw_set_radio_params()` or
+  starting TX/RX, and should show a clear "LoRa is off — enable it in Settings"
+  state rather than silently doing nothing.
+
+### 10.3 Settings UI + phone sync
+
+- On-watch: a `create_switch()` toggle (existing helper, `ui_tools.cpp:341`) in the
+  settings screen, alongside the app's other hardware toggles.
+- Phone-syncable: add `lora_enabled` as a sixth field to
+  `watch-settings-sync-protocol-plan.md`'s `settings` message pair (its §3.1/§3.2),
+  alongside `notif_timeout_ms`/`notif_vibrate`/`pinned_mask`/`clock_mode`/
+  `low_batt_pct` — same partial-update-on-the-way-in, full-state-echo-on-the-way-back
+  shape, same per-field clamping/validation style. This travels over the
+  *Gadgetbridge* connection (general watch settings), a separate concern from
+  §5.3's new Meshtastic GATT service — the phone doesn't need the Meshtastic app
+  open to flip this switch, and flipping it off should visibly disconnect anything
+  currently attached to the Meshtastic service (the app should show "disconnected,"
+  not hang). See the companion edit made to `watch-settings-sync-protocol-plan.md`
+  for the exact field addition (its §3/§4/§5/§7).
+
+### 10.4 Interaction with §5.6's region-gating and with mesh routing
+
+Two independent gates end up in front of TX, and both are needed:
+
+- **§10's `lora_enabled`** — a blunt, always-available, user-facing kill switch
+  covering every LoRa consumer in the app (raw radio test, broadcast chat,
+  Meshtastic node alike). Off means off, full stop, regardless of what any of those
+  three subsystems think their own state is.
+- **§5.6's region-unset gate** — narrower and Meshtastic-specific: even with
+  `lora_enabled = true`, the *node* still won't transmit until it has a real region
+  configured (mirrors Meshtastic's own onboarding). This only applies to the node
+  module; it has no bearing on `ui_radio.cpp`/`ui_msgchat.cpp`, which have no
+  concept of "region."
+
+Turning the radio off (§10) on a node that's currently relaying traffic for other
+mesh members drops it from the mesh immediately and silently from their point of
+view — the same as physically powering off any Meshtastic node. This is expected,
+user-directed behavior, not a bug to guard against; it should not be "fixed" later
+by e.g. deferring the toggle until routing looks idle.

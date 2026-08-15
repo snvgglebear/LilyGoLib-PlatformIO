@@ -8,6 +8,14 @@ This is the protocol and firmware half of that: a new `settings` message pair,
 what it carries, how it persists, and where it plugs into `GbApp`. The
 Gadgetbridge-side half is a companion preferences screen; see **Target** below.
 
+**Revision (2026-08-15):** added a sixth setting, `lora_enabled` (§1, §3.1, §3.2,
+§4, §5, §7), per `lora-meshtastic-protocol-interop-plan.md` §10 — a persisted
+on/off switch for the LoRa radio, needed once that plan's Meshtastic node module
+gives the watch a always-on radio consumer worth being able to fully disable from
+the phone. This field is watch-local hardware state, not a Meshtastic protocol
+concept, so it travels over this plan's general `settings` mechanism rather than
+the separate Meshtastic BLE service that plan adds.
+
 **Target:** the `twatch_ultra` branch of
 <https://codeberg.org/snvgglebear/Gadgetbridge>, files:
 
@@ -56,11 +64,14 @@ exposing, is watch-local and defined once in `src/new_interface/app_config.h`:
 | Pinned-apps set | `PINNED_APPS_DEFAULT_MASK` over `enum PinnableApp` | bitmask, `PIN_APP_COUNT` bits |
 | Clock face | `CLOCK_MODE_DEFAULT` over `enum ClockMode` | `CLOCK_MODE_DIGITAL` \| `CLOCK_MODE_ANALOG` |
 | Low-battery warning threshold | `LOW_BATTERY_WARNING_PERCENT` (+ `..._REARM_PERCENT`) | percent |
+| LoRa radio enabled | *(new, `lora-meshtastic-protocol-interop-plan.md` §10)* | bool, default `false` |
 
 These are today either compile-time defaults or, once the on-watch settings UI
 lands, runtime values the watch changes for itself. Nothing writes them from
-BLE. This plan does not invent new settings beyond this list — it is the
-complete set of tunables `app_config.h` documents as user-facing today.
+BLE. This plan's original scope was exactly this `app_config.h` list; the
+2026-08-15 revision adds one more tunable, `lora_enabled`, which lives in
+`hal_interface.h`'s `user_setting_params_t` rather than `app_config.h` (see §4)
+but is otherwise the same shape of setting.
 
 **Persistence precedent already in this codebase.** `src/new_interface/ui_main.cpp`
 keeps `brightness_level` in `RTC_DATA_ATTR` storage — survives deep sleep, not a
@@ -112,7 +123,10 @@ is the go-to reference elsewhere in this fork per the SMS plan) — e.g. a new
 - a multi-select or per-app checkboxes for the pinned-apps set (7 entries,
   `enum PinnableApp` in `app_config.h`),
 - a single-select for clock face (digital/analog),
-- a seek-bar for the low-battery warning percent (suggest 5-50%, see §3).
+- a seek-bar for the low-battery warning percent (suggest 5-50%, see §3),
+- a switch for the LoRa radio (`lora_enabled`, see §3) — off by default, matching
+  the watch's own fail-closed default (`lora-meshtastic-protocol-interop-plan.md`
+  §10.2).
 
 ### 2.2 Push on change: `onSendConfiguration`
 
@@ -162,9 +176,14 @@ there).
 | `pinned_mask` | int | Bitmask over `enum PinnableApp` (`app_config.h`); bits beyond `PIN_APP_COUNT` are masked off |
 | `clock_mode` | string | `"digital"` or `"analog"`; unrecognised values are ignored (that field only, not the whole message) |
 | `low_batt_pct` | int | Low-battery warning threshold, percent. Watch clamps to `[5, 50]` |
+| `lora_enabled` | bool | LoRa radio on/off. When set `false`, the watch immediately puts the SX1262 to standby and blocks `ui_radio.cpp`/`ui_msgchat.cpp`/the Meshtastic node module from keying it up (`lora-meshtastic-protocol-interop-plan.md` §10.2) |
 
 ```json
 {"t":"settings","notif_timeout_ms":8000,"notif_vibrate":false,"clock_mode":"analog"}
+```
+
+```json
+{"t":"settings","lora_enabled":false}
 ```
 
 That example changes only the timeout, vibrate flag and clock face — pinned
@@ -198,9 +217,10 @@ Send it:
 | `pinned_mask` | int | Current effective value |
 | `clock_mode` | string | `"digital"` or `"analog"` |
 | `low_batt_pct` | int | Current effective value |
+| `lora_enabled` | bool | Current effective value |
 
 ```json
-{"t":"settings","notif_timeout_ms":6000,"notif_vibrate":true,"pinned_mask":71,"clock_mode":"digital","low_batt_pct":20}
+{"t":"settings","notif_timeout_ms":6000,"notif_vibrate":true,"pinned_mask":71,"clock_mode":"digital","low_batt_pct":20,"lora_enabled":false}
 ```
 
 (`71` = `0b1000111` = `PIN_WIRELESS | PIN_ALARMS | PIN_LORA | PIN_SETTINGS`,
@@ -219,7 +239,7 @@ reverting to firmware defaults is more surprising when the user remembers
 having configured it deliberately, possibly weeks earlier, than when it is
 just "the watch's own idea of a default."
 
-Concretely: extend `user_setting_params_t` (`hal_interface.h`) with the five
+Concretely: extend `user_setting_params_t` (`hal_interface.h`) with the six
 fields from §3 (store `clock_mode` as the existing `enum ClockMode`'s
 underlying `uint8_t`, not as a string — the string is a wire-format choice,
 not a storage one), and extend `hw_get_user_setting()`/`hw_set_user_setting()`
@@ -231,6 +251,16 @@ time a watch with old firmware boots new firmware with a longer struct. No new
 NVS namespace or blob is needed — `"pager"` (`NVS_NAME` in `hal_interface.cpp`)
 already exists and is already the single settings blob for this app's other
 user-tunable knobs.
+
+**`lora_enabled` is the one field of the six whose accessors are owned
+elsewhere.** `lora-meshtastic-protocol-interop-plan.md` §10.2 specifies
+`hw_get_lora_enabled()`/`hw_set_lora_enabled(bool)` as its own dedicated pair
+(since `hw_set_lora_enabled(false)` has an immediate hardware side effect —
+forcing the SX1262 to standby — that the other five settings don't have). Both
+plans agree the underlying storage is the same `user_setting_params_t` blob;
+implement the field and its accessors once, per that plan's §10.2, and have
+this plan's `settings` message (§3) call through those accessors rather than
+defining a second getter/setter pair for the same bit.
 
 ## 5. Watch-side integration point
 
@@ -262,6 +292,10 @@ struct GbSettings {
 
     bool has_low_batt_pct = false;
     int32_t low_batt_pct = 0;           ///< percent; handler clamps to [5, 50]
+
+    bool has_lora_enabled = false;
+    bool lora_enabled = false;          ///< radio on/off; see hal_interface.h's
+                                         ///< hw_set_lora_enabled()
 };
 ```
 
@@ -277,7 +311,7 @@ virtual void onSettings(const GbSettings &) {}   ///< §5.12 `settings`
 // of which side the change came from.
 std::string gb_msg_settings(int32_t notif_timeout_ms, bool notif_vibrate,
                              uint32_t pinned_mask, const std::string &clock_mode,
-                             int32_t low_batt_pct);
+                             int32_t low_batt_pct, bool lora_enabled);
 ```
 
 **`gb_app.h`/`gb_app.cpp`** — one new `GbStateChange` value, one incoming
@@ -304,6 +338,7 @@ public:
     void reportPinnedMask(uint32_t mask);
     void reportClockMode(const std::string &mode);
     void reportLowBatteryPercent(int32_t pct);
+    void reportLoraEnabled(bool enabled);
 
 protected:
     void onSettings(const GbSettings &settings) override;   // stores + notify(GB_CHANGE_SETTINGS)
@@ -318,6 +353,7 @@ private:
     uint32_t m_eff_pinned_mask = PINNED_APPS_DEFAULT_MASK;
     std::string m_eff_clock_mode = "digital";
     int32_t m_eff_low_batt_pct = LOW_BATTERY_WARNING_PERCENT;
+    bool m_eff_lora_enabled = false;    // fail-closed default, see lora plan §10.2
     void sendSettingsEcho();   // builds gb_msg_settings() from m_eff_*, debounced
 };
 ```
@@ -328,7 +364,7 @@ immediately rather than only after the first change.
 
 **No new plumbing beyond this is needed on the watch side.** The fan-out
 `app_gadgetbridge.cpp` already provides (`app_gb_add_listener()`,
-`GbStateChange` dispatch) is exactly the seam the four owning UI modules use:
+`GbStateChange` dispatch) is exactly the seam the owning UI modules use:
 
 - `ui_notification_popup.cpp` — on `GB_CHANGE_SETTINGS`, if
   `gb_app.settings().has_notif_timeout_ms` or `.has_notif_vibrate`, call its
@@ -342,10 +378,22 @@ immediately rather than only after the first change.
   `gb_app.reportClockMode(...)`.
 - `ui_battery_status.cpp` — same, for `has_low_batt_pct`, clamped to
   `[5, 50]`, then `gb_app.reportLowBatteryPercent(...)`.
+- **`lora_enabled` has no separate owning UI module** — unlike the other four,
+  it goes straight to `hal_interface.h`'s `hw_set_lora_enabled()`
+  (`lora-meshtastic-protocol-interop-plan.md` §10.2), since that call already
+  is the authoritative state (immediate standby side effect included) rather
+  than a UI module's local variable mirrored into NVS. `GbApp`, on
+  `GB_CHANGE_SETTINGS` with `.has_lora_enabled` set, calls
+  `hw_set_lora_enabled(gb_app.settings().lora_enabled)` directly, then
+  `gb_app.reportLoraEnabled(...)`. The watch's own Settings-screen switch
+  (§2.1's `devicesettings_twatch_ultra` phone-side equivalent) does the same
+  call directly and reports the same way, so both origins converge on one
+  code path.
 
-Each module also calls its own `report*()` once at boot, right after loading
-its NVS-persisted value, so `GbApp`'s mirror (and therefore the connect-time
-echo) is correct even before the phone has ever sent anything.
+Each module (and the direct `hw_set_lora_enabled()` call) also runs its own
+`report*()` once at boot, right after loading its NVS-persisted value, so
+`GbApp`'s mirror (and therefore the connect-time echo) is correct even before
+the phone has ever sent anything.
 
 ## 6. Order of work
 
@@ -356,13 +404,16 @@ echo) is correct even before the phone has ever sent anything.
    the `"settings"` branch in the dispatch switch (mirroring the `"alarm"`
    branch's per-field validation style), `gb_msg_settings()`.
 3. `gb_app.h`/`.cpp`: `GB_CHANGE_SETTINGS`, `onSettings()` override,
-   `m_incoming_settings`/`m_eff_*` fields, the four `report*()` setters,
+   `m_incoming_settings`/`m_eff_*` fields, the five `report*()` setters,
    `sendSettingsEcho()` (debounced), call it from `onConnected()`.
-4. `hal_interface.h`/`.cpp`: extend `user_setting_params_t` with the five
-   fields, defaults in the reset-to-defaults path, getters/setters plumbed
-   through `hw_get_user_setting()`/`hw_set_user_setting()`.
-5. Wire up the four UI modules per §5's list — each is a small, independent
-   change and can land/be tested one at a time.
+4. `hal_interface.h`/`.cpp`: extend `user_setting_params_t` with the six
+   fields (including `lora_enabled` — coordinate with
+   `lora-meshtastic-protocol-interop-plan.md` §10.2, which specifies that
+   field's own accessors), defaults in the reset-to-defaults path,
+   getters/setters plumbed through `hw_get_user_setting()`/`hw_set_user_setting()`.
+5. Wire up the four owning UI modules plus the direct `hw_set_lora_enabled()`
+   call, per §5's list — each is a small, independent change and can
+   land/be tested one at a time.
 6. Gadgetbridge fork: `devicesettings_twatch_ultra` screen + coordinator
    registration (§2.1), new `onSendConfiguration()` (§2.2), incoming-`settings`
    handling to refresh the screen (§2.3, needs its own design pass — flagged
@@ -386,7 +437,9 @@ the only part that needs the real Android fork.
 | Set `low_batt_pct` to 90 | Clamped to 50 |
 | Set `clock_mode` to `"sundial"` | That field ignored; other fields in the same message still applied; no crash |
 | Set `pinned_mask` with bit 30 set (`1u<<30`) | High bit masked off before applying; watch does not crash indexing `PinnableApp` |
-| Every field set on a fully-populated device | Watch's next echo reflects all five, matching what was sent (after clamping) |
+| `{"t":"settings","lora_enabled":false}` while a LoRa app (radio test, chat, or the Meshtastic node) is active | Radio goes to standby immediately; the active app reflects "LoRa is off" rather than silently stalling |
+| `{"t":"settings","lora_enabled":true}` | Radio leaves standby; whichever app is active resumes, subject to its own gating (e.g. the Meshtastic node still needs a region set, per that plan's §5.6/§10.4) |
+| Every field set on a fully-populated device | Watch's next echo reflects all six, matching what was sent (after clamping) |
 | Phone sets a value, then watch reboots (full power cycle, battery removed) | Value survives — NVS via `user_setting_params_t`, not RTC memory |
 | Phone sets a value, watch goes to deep sleep and wakes | Value survives (would have anyway even under `RTC_DATA_ATTR`; NVS is a superset) |
 | User changes clock face on the watch itself | Next connect (or the debounced immediate echo, if already connected) shows the new value on the phone, not the last phone-set one |
@@ -419,7 +472,12 @@ the only part that needs the real Android fork.
   phone should debounce `onSendConfiguration` the way `BangleJSCoordinator`-style
   seek-bar prefs typically do (commit on release, not per-tick), and
   `GbApp::sendSettingsEcho()` (§5) should coalesce bursts rather than writing
-  + notifying on every incoming message.
+  + notifying on every incoming message. **`lora_enabled` is the one field
+  that should not wait for this debounce on the way in** — its hardware side
+  effect (forcing the radio to standby) needs to apply immediately per
+  `lora-meshtastic-protocol-interop-plan.md` §10.2; only the NVS write and the
+  echo notification should be debounced, not the `hw_set_lora_enabled()` call
+  itself.
 - **`pinned_mask` forward-compatibility.** `PIN_APP_COUNT` will likely grow as
   more apps become pinnable. A mask saved by an older phone build simply
   leaves the new bits at 0 (unpinned) — harmless — but a *newer* phone talking

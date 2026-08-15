@@ -155,6 +155,7 @@ public:
     void reportPinnedMask(uint32_t mask);
     void reportClockMode(const std::string &mode);
     void reportLowBatteryPercent(int32_t pct);
+    void reportLoraEnabled(bool enabled);
 
     // -- actions, from the UI ---------------------------------------------
 
@@ -261,6 +262,7 @@ private:
     uint32_t m_eff_pinned_mask = PINNED_APPS_DEFAULT_MASK;
     std::string m_eff_clock_mode = "digital";
     int32_t m_eff_low_batt_pct = LOW_BATTERY_WARNING_PERCENT;
+    bool m_eff_lora_enabled = false;    ///< overwritten by ui_sys_init() at boot from NVS
 
     /// Min gap between two §6.8 echoes; extra changes within it are coalesced
     /// by sendSettingsEcho() (debounce a phone-side slider burst).
