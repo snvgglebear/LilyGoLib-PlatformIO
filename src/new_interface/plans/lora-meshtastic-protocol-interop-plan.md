@@ -512,6 +512,8 @@ if ever wanted.
 | Send a text message from the watch | Arrives at a real Meshtastic client (phone app, second node) as a normal `TEXT_MESSAGE_APP` packet — the actual interop proof |
 | Receive a text message from the mesh | Shows up in the Meshtastic app (primary) and on the watch's own status UI (§5.5), attributed to the sending node |
 | Toggle LoRa off while the node is mid-mesh (relaying for others) | Radio goes to standby immediately (§10.2); watch drops off the mesh from other nodes' point of view, same as physically powering off a node (§10.4) — expected, not a bug |
+| Battery drops to `LORA_BATTERY_SAVER_PERCENT` while `lora_enabled` is still true | Radio forced to standby immediately (§10.5); Settings switch still shows "on" with a "battery saver" note; `ui_radio.cpp`/`ui_msgchat.cpp` show "LoRa is off to save battery" |
+| Battery recovers to `LORA_BATTERY_SAVER_REARM_PERCENT`, or charger is connected | Override clears; radio usable again next time a LoRa app is opened (no proactive re-arm mid-session) |
 | `emulator_watch_ultra` with the stdin/fixture transport (§5.4) | Node state machine and UI are exercisable without hardware, per this repo's simulator-first convention |
 
 ## 9. Risks
@@ -633,3 +635,72 @@ mesh members drops it from the mesh immediately and silently from their point of
 view — the same as physically powering off any Meshtastic node. This is expected,
 user-directed behavior, not a bug to guard against; it should not be "fixed" later
 by e.g. deferring the toggle until routing looks idle.
+
+### 10.5 Battery-saver: an automatic third gate, layered on top of §10's manual one
+
+**Implemented**, alongside §10.1-§10.4. §10's `lora_enabled` is a *manual* switch —
+it does nothing on its own if the user leaves it on and the watch's battery runs
+down while the radio (or a future always-on node) keeps drawing power. A
+battery-powered watch acting as a Meshtastic bridge is a materially different power
+budget than the mains/solar/large-pack nodes Meshtastic is usually deployed on, so
+this needs its own, automatic gate:
+
+- `hal_interface.h`/`.cpp`: `hw_get_lora_battery_saver_active()` (read-only status)
+  and `hw_lora_radio_allowed()` — the actual gate every radio-owning call site must
+  check, equal to `hw_get_lora_enabled() && !hw_get_lora_battery_saver_active()`.
+  Critically, `hw_get_lora_enabled()` itself is **unchanged** by battery-saver — it
+  keeps meaning "the user's own persisted preference," which is what the Settings
+  switch (§10.3) and the phone-synced `lora_enabled` field both read/write. The
+  override is a separate, in-memory-only bit (`hw_lora_battery_saver_poll()`,
+  called from `ui_main.cpp`'s existing `hw_device_poll()` battery timer, same 5 s
+  cadence already used for the hard-shutdown check), so it can never leak into NVS
+  or get echoed to the phone as if the user had turned the radio off.
+- Thresholds (`app_config.h`): `LORA_BATTERY_SAVER_PERCENT` (10%) engages the
+  override and forces the radio to standby immediately, the same way
+  `hw_set_lora_enabled(false)` does; `LORA_BATTERY_SAVER_REARM_PERCENT` (15%) clears
+  it, mirroring `LOW_BATTERY_WARNING_PERCENT`/`_REARM_PERCENT`'s existing hysteresis
+  pattern so the radio doesn't flap on/off right at the threshold. Charging clears
+  the override unconditionally — deliberately chosen well below
+  `LOW_BATTERY_WARNING_PERCENT` (20%, a warning only) and well above the hard
+  3300 mV shutdown floor in `hw_device_poll()`: the radio gives up its share of the
+  battery budget before the watch warns the user, and long before it shuts down.
+- `ui_radio.cpp`/`ui_msgchat.cpp` gate on `hw_lora_radio_allowed()` (not
+  `hw_get_lora_enabled()` alone) and show "LoRa is off to save battery" instead of
+  the generic "enable it in Settings" message when the override, not the user's own
+  preference, is what's blocking them. `ui_sys.cpp`'s Settings switch still reflects
+  the user's own preference (it can legitimately show "on" while the radio is
+  actually off) with a status note explaining the discrepancy.
+
+**Not implemented, and out of scope until the full node exists (§4.1):** Meshtastic's
+own `power.proto` / `Config.PowerConfig` — `is_power_saving`, `ls_secs` (light-sleep
+interval between mesh checks), `min_wake_secs`, `sds_secs` (super-deep-sleep),
+`on_battery_shutdown_after_secs`, `adc_multiplier_override`. This is the *node's*
+own configurable duty-cycling (skip listening most of the time, wake briefly to
+check the mesh), set by the Meshtastic app over the admin channel like any other
+Meshtastic node's power config, and it's a real, separate mechanism from §10.5's
+blunt watch-level override:
+
+- §10.5 is a coarse, watch-wide "radio budget is gone, stop entirely" cutoff that
+  applies today, before any node code exists, to the raw-PHY apps too.
+  `power.proto` is Meshtastic-specific, fine-grained duty-cycling that only makes
+  sense once `meshtastic_node/` (§5.4) exists to have something to duty-cycle.
+- Add `power.proto` to §5.2's schema list when that work starts, and have
+  `mtc_node.*` honor it the way real Meshtastic firmware does (reduced-duty-cycle
+  RX windows, not full standby) — a node that's fully asleep per §10.5 can't relay
+  for the mesh at all, whereas a node in Meshtastic's own power-saving mode still
+  participates, just less promptly. Both mechanisms should coexist: §10.5 as the
+  hard floor, `power.proto`'s setting as the node's own finer-grained behavior above
+  that floor.
+- This also interacts with the watch's separate, pre-existing CPU/display
+  power-save state machine (`ui_main.cpp`'s `ui_poll_timer_callback()`:
+  240→80 MHz idle downclock, then light sleep via `instance.lightSleep()`, gated by
+  `set_low_power_mode_flag()`/`DEVICE_CAN_SLEEP`) — that machine only runs while the
+  home tile is in front and currently has no notion of "a background service needs
+  to keep running regardless of what's on screen." An always-on mesh node is
+  exactly such a service: unlike today's apps (which hold `DEVICE_CAN_SLEEP`
+  cleared only while their own screen is open), the node needs to keep receiving
+  even when the user has navigated away entirely, which the current per-app flag
+  does not model. Flagged as an open design question for whenever §5.4 is built —
+  whether light sleep on this SoC/LilyGoLib version preserves LoRa SPI/IRQ handling
+  well enough for a node to keep receiving through it is unverified and should be
+  spiked alongside §9 risk 1, not assumed either way.

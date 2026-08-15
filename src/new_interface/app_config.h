@@ -98,6 +98,19 @@ enum PinnableApp {
 /// hw_get_lora_enabled()/hw_set_lora_enabled().
 #define LORA_RADIO_DEFAULT_ENABLED   false
 
+/// Battery-saver override: at or below this percent (and not charging), the
+/// radio is forced off regardless of the user's own lora_enabled preference
+/// (hal_interface.h's hw_get_lora_enabled(), untouched by this), to preserve
+/// what battery is left for the watch's core functions. Deliberately below
+/// LOW_BATTERY_WARNING_PERCENT (a warning only) and above the hard-shutdown
+/// floor in ui_main.cpp's hw_device_poll() (~3300 mV, roughly single-digit
+/// percent) -- the radio gives up its share of the battery budget well before
+/// the watch shuts down outright. _REARM_PERCENT is the hysteresis gap that
+/// clears the override, mirroring LOW_BATTERY_WARNING_REARM_PERCENT's pattern
+/// so the radio doesn't flap on/off right at the threshold.
+#define LORA_BATTERY_SAVER_PERCENT         10
+#define LORA_BATTERY_SAVER_REARM_PERCENT   15
+
 // ---------------------------------------------------------------------------
 // Alarms / timer / stopwatch
 // ---------------------------------------------------------------------------

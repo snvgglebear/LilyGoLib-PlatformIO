@@ -248,6 +248,17 @@ static lv_obj_t *create_subpage_lora(lv_obj_t *menu, lv_obj_t *main_page)
 
     create_switch(sub_page, LV_SYMBOL_WIFI, "LoRa Enable", hw_get_lora_enabled(), lora_enable_cb);
 
+    if (hw_get_lora_battery_saver_active()) {
+        // The switch above still reflects the user's own preference (it may
+        // well be "on") -- this explains why the radio is actually off right
+        // now regardless. Not live-updated while this screen stays open; it
+        // reflects the state as of opening Settings, same as the rest of this
+        // screen's fields.
+        lv_obj_t *note = lv_label_create(sub_page);
+        lv_label_set_text(note, "Currently off: battery saver");
+        lv_obj_set_style_text_color(note, lv_palette_main(LV_PALETTE_ORANGE), 0);
+    }
+
     lv_menu_set_load_page_event(menu, cont, sub_page);
     return cont;
 }

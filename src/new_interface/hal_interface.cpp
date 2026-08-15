@@ -1038,6 +1038,47 @@ void hw_set_lora_enabled(bool enabled)
     }
 }
 
+/// True while battery-saver is overriding the user's own lora_enabled
+/// preference off. In-memory only -- deliberately not persisted, since it
+/// tracks live battery state, not a user choice.
+static bool lora_battery_saver_active = false;
+
+bool hw_get_lora_battery_saver_active()
+{
+    return lora_battery_saver_active;
+}
+
+bool hw_lora_radio_allowed()
+{
+    return hw_get_lora_enabled() && !lora_battery_saver_active;
+}
+
+void hw_lora_battery_saver_poll()
+{
+    monitor_params_t params;
+    hw_get_monitor_params(params);
+    bool charging = params.usb_voltage > 0;
+
+    if (charging) {
+        lora_battery_saver_active = false;
+        return;
+    }
+
+    if (!lora_battery_saver_active && params.battery_percent <= LORA_BATTERY_SAVER_PERCENT) {
+        lora_battery_saver_active = true;
+        if (hw_get_lora_enabled()) {
+            // Force standby immediately, same rationale as hw_set_lora_enabled(false):
+            // "off" must be immediate, not left for the next radio-owning app to notice.
+            radio_params_t rparams;
+            hw_get_radio_params(rparams);
+            rparams.mode = RADIO_DISABLE;
+            hw_set_radio_params(rparams);
+        }
+    } else if (lora_battery_saver_active && params.battery_percent >= LORA_BATTERY_SAVER_REARM_PERCENT) {
+        lora_battery_saver_active = false;
+    }
+}
+
 const uint32_t hw_get_disp_timeout_ms()
 {
     return user_setting.disp_timeout_second * 1000UL;

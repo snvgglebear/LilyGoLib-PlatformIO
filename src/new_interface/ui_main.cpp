@@ -310,6 +310,9 @@ static void hw_device_poll(lv_timer_t *t)
 {
     monitor_params_t params;
     hw_get_monitor_params(params);
+
+    hw_lora_battery_saver_poll();
+
     if (params.battery_voltage < 3300 && params.usb_voltage == 0) {
         printf("Low battery voltage: %lu mV USB Voltage: %lu mV\n", params.battery_voltage, params.usb_voltage);
         lv_obj_clean(lv_screen_active());

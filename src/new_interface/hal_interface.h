@@ -669,6 +669,40 @@ bool hw_get_lora_enabled();
 void hw_set_lora_enabled(bool enabled);
 
 /**
+ * @brief Check whether battery-saver is currently forcing the LoRa radio off.
+ *
+ * Independent of, and layered on top of, the user's own preference
+ * (hw_get_lora_enabled()) -- see LORA_BATTERY_SAVER_PERCENT (app_config.h).
+ * UI uses this to explain *why* the radio is unavailable when the user's own
+ * setting is still "on".
+ */
+bool hw_get_lora_battery_saver_active();
+
+/**
+ * @brief The actual gate LoRa-owning code must check before using the radio.
+ *
+ * hw_get_lora_enabled() alone reports only the user's persisted preference;
+ * it does not reflect the battery-saver override. This combines both:
+ * @code
+ * hw_get_lora_enabled() && !hw_get_lora_battery_saver_active()
+ * @endcode
+ *
+ * @return True if the radio may be configured/keyed up right now.
+ */
+bool hw_lora_radio_allowed();
+
+/**
+ * @brief Re-evaluate the battery-saver override against the current battery
+ *        state, forcing the radio to standby the moment it engages.
+ *
+ * Call periodically (see ui_main.cpp's hw_device_poll(), which already polls
+ * battery state on the same cadence for the hard-shutdown check). Charging
+ * always clears the override -- a watch on a charger has no battery budget to
+ * protect.
+ */
+void hw_lora_battery_saver_poll();
+
+/**
  * @brief Set the radio to default configuration.
  */
 void hw_set_radio_default();

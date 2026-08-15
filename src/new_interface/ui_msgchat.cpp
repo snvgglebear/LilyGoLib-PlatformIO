@@ -441,13 +441,15 @@ void ui_msgchat_enter(lv_obj_t *parent)
 {
     menu = create_menu(parent, back_event_handler);
 
-    if (!hw_get_lora_enabled()) {
+    if (!hw_lora_radio_allowed()) {
         lv_obj_t *main_page = lv_menu_page_create(menu, NULL);
         lv_obj_t *cont = lv_menu_cont_create(main_page);
         lv_obj_remove_style_all(cont);
         lv_obj_set_size(cont, lv_pct(100), 80);
         lv_obj_t *label = lv_label_create(cont);
-        lv_label_set_text(label, "LoRa is off -- enable it in Settings");
+        lv_label_set_text(label, hw_get_lora_battery_saver_active()
+                                  ? "LoRa is off to save battery"
+                                  : "LoRa is off -- enable it in Settings");
         lv_obj_set_style_text_color(label, lv_color_black(), 0);
         lv_obj_set_width(label, lv_pct(90));
         lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
