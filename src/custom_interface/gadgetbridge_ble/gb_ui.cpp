@@ -193,31 +193,15 @@ bool isDismissSwipe(lv_event_t *event)
 }
 
 /**
- * LVGL fires a gesture event on whichever object was actually touched at
- * press-down, not on its parent, unless that object has
- * LV_OBJ_FLAG_GESTURE_BUBBLE set (off by default). Without this, a swipe
- * starting on the popup's own title/body labels -- the most natural place to
- * swipe, since that's the biggest visible target -- would never reach a
- * handler registered on their container.
- */
-void bubbleGesturesFromChildren(lv_obj_t *obj)
-{
-    if (!obj) {
-        return;
-    }
-    uint32_t count = lv_obj_get_child_count(obj);
-    for (uint32_t i = 0; i < count; i++) {
-        lv_obj_t *child = lv_obj_get_child(obj, i);
-        lv_obj_add_flag(child, LV_OBJ_FLAG_GESTURE_BUBBLE);
-        bubbleGesturesFromChildren(child);
-    }
-}
-
-/**
- * Swipe-to-dismiss for a notification popup. @p handler is registered on the
- * box and on its header/content/footer, and every descendant of those (the
- * title/body labels) gets LV_OBJ_FLAG_GESTURE_BUBBLE so a swipe starting on
- * any of them reaches @p handler instead of being swallowed where it began.
+ * Swipe-to-dismiss for a notification popup. Every object with a parent gets
+ * LV_OBJ_FLAG_GESTURE_BUBBLE *by default* in LVGL (lv_obj.c:
+ * `if(parent) obj->flags |= LV_OBJ_FLAG_GESTURE_BUBBLE;`), so a gesture
+ * starting anywhere inside a msgbox -- its labels, its header, the box
+ * itself -- climbs straight past all of them by default and fires on the
+ * box's parent (the full-screen backdrop lv_msgbox_create(NULL) auto-creates)
+ * instead. Removing the flag on box/header/content/footer makes the climb
+ * stop at whichever of them the touch bubbles up to, where @p handler is
+ * registered.
  */
 void addSwipeToDismiss(lv_obj_t *box, lv_event_cb_t handler)
 {
@@ -226,7 +210,7 @@ void addSwipeToDismiss(lv_obj_t *box, lv_event_cb_t handler)
     for (lv_obj_t *target : targets) {
         if (target) {
             lv_obj_add_event_cb(target, handler, LV_EVENT_GESTURE, NULL);
-            bubbleGesturesFromChildren(target);
+            lv_obj_remove_flag(target, LV_OBJ_FLAG_GESTURE_BUBBLE);
         }
     }
 }
