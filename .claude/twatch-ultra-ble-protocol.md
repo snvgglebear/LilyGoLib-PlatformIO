@@ -273,6 +273,61 @@ The user pressed "find device" in Gadgetbridge. Start ringing or vibrating until
 {"t":"vibrate","n":60}
 ```
 
+### 5.12 `nav` — turn-by-turn update
+
+One active route at a time. Send on every instruction change and, if the source provides it, on
+distance ticks; the watch just displays the latest snapshot, same as `weather`. The phone computes
+the route (OsmAnd via Gadgetbridge's own integration, or the Google Maps notification listener);
+the watch never routes or fetches map data.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `action` | string | Maneuver: `continue`, `left`, `right`, `slight_left`, `slight_right`, `sharp_left`, `sharp_right`, `keep_left`, `keep_right`, `uturn_left`, `uturn_right`, `roundabout_left`, `roundabout_right`, `roundabout_straight`, `roundabout_uturn`, `offroute`, `arrive`, `merge`, or `unknown` |
+| `instr` | string | Instruction text, e.g. `"Turn left onto Main St"` |
+| `dist` | string | Pre-formatted distance to the maneuver, e.g. `"300 m"`, `"0.2 mi"` — display verbatim, do not reparse |
+| `dist_m` | int | Raw meters to the maneuver, **only when the source actually has it**; omit otherwise, the watch falls back to `dist` |
+| `eta` | string | Pre-formatted ETA or remaining time, e.g. `"08:39"`, `"12 min"` |
+| `dest` | string | Destination name/address, if known |
+| `pct` | int | Route completion percent, 0–100 |
+
+Every field but `t` is optional; a build that only has `instr`+`action` still produces a usable
+display. A watch-side `GB_HAPTIC_TAP` is expected on `action` *changes* only, not per update.
+
+```json
+{"t":"nav","action":"left","instr":"Turn left onto Main St","dist":"300 m","dist_m":300,"eta":"08:39","dest":"128 Bristol Rd","pct":42}
+```
+
+### 5.13 `nav-` — navigation ended
+
+Clears the watch's navigation display. No fields — there is only ever one active route, so no id
+is needed (unlike `notify-`).
+
+```json
+{"t":"nav-"}
+```
+
+### 5.14 `settings` — update watch settings
+
+A partial update: only the fields the phone actually sends are touched. Sending an empty
+`{"t":"settings"}` is a valid no-op (the watch already announces full state on connect, §6.8).
+The watch clamps out-of-range values rather than rejecting them.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `notif_timeout_ms` | int | Notification popup auto-dismiss delay, ms; clamped to [2000, 15000] |
+| `notif_vibrate` | bool | Vibrate on notification arrival |
+| `pinned_mask` | int | Bitmask over the watch's pinnable-app set; bits beyond the app count are masked off |
+| `clock_mode` | string | `"digital"` or `"analog"`; unrecognised values are ignored (that field only) |
+| `low_batt_pct` | int | Low-battery warning threshold, percent; clamped to [5, 50] |
+
+```json
+{"t":"settings","notif_timeout_ms":8000,"notif_vibrate":false,"clock_mode":"analog"}
+```
+
+That example changes only the timeout, vibrate flag and clock face — pinned apps and the battery
+threshold are left exactly as they were, because they are absent, not because they were sent as
+their current value.
+
 ## 6. Messages: watch → phone
 
 Notified on the TX characteristic. All are optional — send only what your firmware supports.
@@ -363,6 +418,27 @@ Shows an Android toast. Useful during bring-up; do not use it as a logging chann
 ```json
 {"t":"warn","msg":"GNSS fix lost"}
 ```
+
+### 6.8 `settings` — report effective settings
+
+Send once at connect (after `ver`, alongside `status`) and every time any of the five values
+actually changes, from either origin (phone-driven or changed on the watch itself), debounced.
+Always the **full** effective state — never a partial update — so one message is enough for the
+phone to repaint its settings screen regardless of which side the change came from.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `notif_timeout_ms` | int | Current effective value |
+| `notif_vibrate` | bool | Current effective value |
+| `pinned_mask` | int | Current effective value |
+| `clock_mode` | string | `"digital"` or `"analog"` |
+| `low_batt_pct` | int | Current effective value |
+
+```json
+{"t":"settings","notif_timeout_ms":6000,"notif_vibrate":true,"pinned_mask":71,"clock_mode":"digital","low_batt_pct":20}
+```
+
+(`71` = `0b1000111` = the default pinnable-app mask.)
 
 ## 7. Connection sequence
 
