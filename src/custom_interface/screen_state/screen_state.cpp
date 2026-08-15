@@ -37,10 +37,23 @@ void screen_state_init(void)
 #ifdef HAS_WRIST_TILT_SENSOR
     /*Whether this actually fires depends on the Bosch fusion firmware blob
       LilyGoUltra::initSensor() flashed (BOSCH_BHI260_KLIO / BOSCH_BHI260_GPIO)
-      exposing WRIST_TILT_GESTURE - confirm on real hardware before relying on
-      it as the only wake path.*/
-    instance.sensor.onResultEvent(SensorBHI260AP::WRIST_TILT_GESTURE, wristTiltResultCb);
-    instance.sensor.configure(SensorBHI260AP::WRIST_TILT_GESTURE, 0, 0);
+      exposing WRIST_TILT_GESTURE. SensorLib logs failures via log_e(), but
+      CORE_DEBUG_LEVEL=0 in this project silences that, so check + report
+      over Serial directly instead of trusting it silently worked.
+
+      sample_rate is not a polling interval here - for BHY2 virtual sensors
+      0 Hz means "disabled". A gesture/event sensor still needs a nonzero
+      rate to turn reporting on at all; the exact value doesn't change how
+      often the gesture itself can fire.*/
+    bool registered = instance.sensor.onResultEvent(SensorBHI260AP::WRIST_TILT_GESTURE, wristTiltResultCb);
+    bool configured = registered && instance.sensor.configure(SensorBHI260AP::WRIST_TILT_GESTURE, 1, 0);
+
+    if (!configured) {
+        Serial.println("[screen_state] wrist-tilt gesture unavailable in this BHI260AP firmware image - wrist wake disabled, falling back to touch/power button only");
+        instance.sensor.getSensorInfo().printInfo(Serial);
+    } else {
+        Serial.println("[screen_state] wrist-tilt wake enabled");
+    }
 #endif
 
     last_activity_ms = millis();

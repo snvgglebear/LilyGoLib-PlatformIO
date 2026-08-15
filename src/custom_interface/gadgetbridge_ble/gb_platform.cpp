@@ -132,6 +132,13 @@ void gb_platform::vibrate(GbHaptic effect)
     instance.setHapticEffects(static_cast<uint8_t>(effect));
     instance.vibrator();
     instance.setHapticEffects(previous);
+
+    // The DRV2605 haptic driver and the touch controller share one I2C bus,
+    // and LilyGoLib has no mutex over it (only over SPI) -- a haptic write can
+    // leave the touch controller's IRQ/I2C state wedged so it stops reporting
+    // touches. wakeupTouch() re-pulses the touch controller's reset line and
+    // re-arms its interrupt, which also recovers it from this.
+    instance.wakeupTouch();
 }
 
 #else // !ARDUINO -- native/SDL2 emulator build

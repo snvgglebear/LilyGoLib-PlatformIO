@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include "gb_link.h"
+#include "gb_ui_metrics.h"
 #include "lvgl.h"
 
 #include "../usable_area/usable_area.h"
@@ -126,10 +127,14 @@ lv_obj_t *makeButton(lv_obj_t *parent, const char *text, lv_event_cb_t handler, 
 {
     lv_obj_t *button = lv_button_create(parent);
     lv_obj_add_event_cb(button, handler, LV_EVENT_CLICKED, user_data);
+    lv_obj_set_height(button, GB_BUTTON_HEIGHT);
+    lv_obj_set_style_min_width(button, GB_BUTTON_MIN_WIDTH, 0);
+
     lv_obj_t *label = lv_label_create(button);
     lv_obj_set_style_text_font(label, fontBody(), 0);
     lv_label_set_text(label, text);
     lv_obj_center(label);
+
     return button;
 }
 
@@ -146,6 +151,84 @@ lv_obj_t *makeSafeMsgbox()
     lv_obj_set_width(box, safe_area_screen_width() - 2 * SAFE_INSET);
     lv_obj_set_style_max_height(box, safe_area_screen_height() - 2 * SAFE_INSET, 0);
     return box;
+}
+
+/**
+ * Size a msgbox's header/footer strips to GB_MSGBOX_STRIP_HEIGHT. Their
+ * buttons (close, back, action buttons, from lv_msgbox_add_footer_button()/
+ * add_header_button()) are LV_PCT(100) of the strip, so this sizes them too;
+ * each button's width also gets GB_BUTTON_MIN_WIDTH as a floor, same as
+ * makeButton() elsewhere in this UI.
+ *
+ * Call once, after every lv_msgbox_add_*() call for that box.
+ */
+void sizeMsgboxStrips(lv_obj_t *box)
+{
+    lv_obj_t *strips[] = {lv_msgbox_get_header(box), lv_msgbox_get_footer(box)};
+    for (lv_obj_t *strip : strips) {
+        if (!strip) {
+            continue;
+        }
+        lv_obj_set_height(strip, GB_MSGBOX_STRIP_HEIGHT);
+        uint32_t count = lv_obj_get_child_count(strip);
+        for (uint32_t i = 0; i < count; i++) {
+            lv_obj_t *child = lv_obj_get_child(strip, i);
+            if (!lv_obj_check_type(child, &lv_label_class)) {
+                lv_obj_set_style_min_width(child, GB_BUTTON_MIN_WIDTH, 0);
+            }
+        }
+    }
+}
+
+/// True if the gesture that just fired on @p event was a horizontal swipe.
+bool isDismissSwipe(lv_event_t *event)
+{
+    LV_UNUSED(event);
+    lv_indev_t *indev = lv_indev_active();
+    if (!indev) {
+        return false;
+    }
+    lv_dir_t dir = lv_indev_get_gesture_dir(indev);
+    return dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT;
+}
+
+/**
+ * LVGL fires a gesture event on whichever object was actually touched at
+ * press-down, not on its parent, unless that object has
+ * LV_OBJ_FLAG_GESTURE_BUBBLE set (off by default). Without this, a swipe
+ * starting on the popup's own title/body labels -- the most natural place to
+ * swipe, since that's the biggest visible target -- would never reach a
+ * handler registered on their container.
+ */
+void bubbleGesturesFromChildren(lv_obj_t *obj)
+{
+    if (!obj) {
+        return;
+    }
+    uint32_t count = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < count; i++) {
+        lv_obj_t *child = lv_obj_get_child(obj, i);
+        lv_obj_add_flag(child, LV_OBJ_FLAG_GESTURE_BUBBLE);
+        bubbleGesturesFromChildren(child);
+    }
+}
+
+/**
+ * Swipe-to-dismiss for a notification popup. @p handler is registered on the
+ * box and on its header/content/footer, and every descendant of those (the
+ * title/body labels) gets LV_OBJ_FLAG_GESTURE_BUBBLE so a swipe starting on
+ * any of them reaches @p handler instead of being swallowed where it began.
+ */
+void addSwipeToDismiss(lv_obj_t *box, lv_event_cb_t handler)
+{
+    lv_obj_t *targets[] = {box, lv_msgbox_get_header(box), lv_msgbox_get_content(box),
+                           lv_msgbox_get_footer(box)};
+    for (lv_obj_t *target : targets) {
+        if (target) {
+            lv_obj_add_event_cb(target, handler, LV_EVENT_GESTURE, NULL);
+            bubbleGesturesFromChildren(target);
+        }
+    }
 }
 
 /// "Signal  Ada Lovelace", clipped to something a watch list can show.
@@ -248,6 +331,7 @@ void showQuickReplies()
                             const_cast<char *>(reply));
     }
     lv_msgbox_add_close_button(box);
+    sizeMsgboxStrips(box);
 }
 
 void detailActionClicked(lv_event_t *event)
@@ -266,6 +350,17 @@ void detailActionClicked(lv_event_t *event)
     } else if (strcmp(action, "mute") == 0) {
         gb_app.muteNotification(s_detail_id);
     }
+    closeBox(s_detail_box);
+}
+
+/// Swipe left/right anywhere on the notification detail popup dismisses it,
+/// same as tapping its trash button (detailActionClicked's "dismiss" case).
+void detailBoxSwiped(lv_event_t *event)
+{
+    if (!isDismissSwipe(event)) {
+        return;
+    }
+    gb_app.dismissNotification(s_detail_id);
     closeBox(s_detail_box);
 }
 
@@ -298,6 +393,8 @@ void notificationClicked(lv_event_t *event)
     lv_obj_add_event_cb(lv_msgbox_add_footer_button(s_detail_box, LV_SYMBOL_EDIT),
                         detailActionClicked, LV_EVENT_CLICKED, const_cast<char *>("reply"));
     lv_msgbox_add_close_button(s_detail_box);
+    sizeMsgboxStrips(s_detail_box);
+    addSwipeToDismiss(s_detail_box, detailBoxSwiped);
 }
 
 // -- conversations -------------------------------------------------------
@@ -329,7 +426,6 @@ void addBubble(lv_obj_t *parent, const GbMessage &message)
     lv_obj_t *bubble = lv_obj_create(row);
     lv_obj_remove_style_all(bubble);
     lv_obj_set_width(bubble, LV_SIZE_CONTENT);
-    lv_obj_set_style_max_width(bubble, LV_PCT(80), 0);
     lv_obj_set_height(bubble, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(bubble, s_small_screen ? 4 : 8, 0);
     lv_obj_set_style_radius(bubble, 10, 0);
@@ -338,9 +434,20 @@ void addBubble(lv_obj_t *parent, const GbMessage &message)
                               : lv_palette_darken(LV_PALETTE_GREY, 4), 0);
     lv_obj_set_flex_flow(bubble, LV_FLEX_FLOW_COLUMN);
 
+    // A child sized LV_PCT(100) of a LV_SIZE_CONTENT parent is a circular
+    // dependency LVGL can't resolve (see lv_obj_pos.c's "avoid circular
+    // dependency" handling) -- the label's width doesn't reliably come out
+    // of that, so no text renders. Cap it at 80% of the thread body's actual
+    // (already-resolved) width instead, and let `bubble` shrink-wrap around
+    // the label's now-real size.
+    lv_obj_update_layout(parent);
+    int32_t max_width = static_cast<int32_t>(lv_obj_get_content_width(parent) * 0.8f);
+    lv_obj_set_style_max_width(bubble, max_width, 0);
+
     lv_obj_t *label = makeLabel(bubble, fontSmall(), lv_color_white(), message.text.c_str());
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_width(label, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_width(label, max_width, 0);
 
     if (message.received > 0) {
         time_t when = static_cast<time_t>(message.received);
@@ -350,8 +457,12 @@ void addBubble(lv_obj_t *parent, const GbMessage &message)
         snprintf(stamp, sizeof(stamp), "%02d:%02d", broken.tm_hour, broken.tm_min);
         lv_obj_t *time_label = makeLabel(bubble, fontSmall(),
                                          lv_palette_main(LV_PALETTE_GREY), stamp);
-        lv_obj_set_style_text_align(time_label, LV_TEXT_ALIGN_RIGHT, 0);
-        lv_obj_set_width(time_label, LV_PCT(100));
+        // Same LV_PCT(100)-of-SIZE_CONTENT problem as the message label, and
+        // the only reason for a full-width label was to give text-align
+        // right something to push against -- align the label object itself
+        // to the bubble's corner instead.
+        lv_obj_set_width(time_label, LV_SIZE_CONTENT);
+        lv_obj_align(time_label, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
     }
 }
 
@@ -470,6 +581,18 @@ void messagePopupReplyClicked(lv_event_t *event)
 void messagePopupDismissClicked(lv_event_t *event)
 {
     LV_UNUSED(event);
+    gb_app.dismissConversation(0);
+    closeBox(s_message_box);
+}
+
+/// Swipe left/right anywhere on the new-message popup dismisses it, same as
+/// tapping its trash button (messagePopupDismissClicked). The newest
+/// conversation is always index 0, same as the rest of this popup.
+void messageBoxSwiped(lv_event_t *event)
+{
+    if (!isDismissSwipe(event)) {
+        return;
+    }
     gb_app.dismissConversation(0);
     closeBox(s_message_box);
 }
@@ -654,6 +777,8 @@ void maybeShowMessagePopup()
     lv_obj_add_event_cb(lv_msgbox_add_footer_button(s_message_box, LV_SYMBOL_TRASH),
                         messagePopupDismissClicked, LV_EVENT_CLICKED, NULL);
     lv_msgbox_add_close_button(s_message_box);
+    sizeMsgboxStrips(s_message_box);
+    addSwipeToDismiss(s_message_box, messageBoxSwiped);
 }
 
 void refreshMusic()
@@ -709,6 +834,7 @@ void refreshCall()
     lv_obj_add_event_cb(hang_up, s_call_box_ringing ? callRejectClicked : callEndClicked,
                         LV_EVENT_CLICKED, NULL);
     lv_obj_set_style_bg_color(hang_up, lv_palette_main(LV_PALETTE_RED), 0);
+    sizeMsgboxStrips(s_call_box);
 }
 
 void refreshFind()
@@ -725,6 +851,7 @@ void refreshFind()
     lv_msgbox_add_text(s_find_box, "Your phone is looking for this watch.");
     lv_obj_add_event_cb(lv_msgbox_add_footer_button(s_find_box, "Silence"), findSilenceClicked,
                         LV_EVENT_CLICKED, NULL);
+    sizeMsgboxStrips(s_find_box);
 }
 
 void refreshFiredAlarm()
@@ -745,6 +872,7 @@ void refreshFiredAlarm()
     lv_msgbox_add_text(s_alarm_box, when);
     lv_obj_add_event_cb(lv_msgbox_add_footer_button(s_alarm_box, "Dismiss"), alarmDismissClicked,
                         LV_EVENT_CLICKED, NULL);
+    sizeMsgboxStrips(s_alarm_box);
 }
 
 void tick(lv_timer_t *timer)
@@ -857,7 +985,7 @@ void gb_ui_begin()
 
     lv_obj_t *tabview = lv_tabview_create(screen);
     lv_tabview_set_tab_bar_position(tabview, LV_DIR_BOTTOM);
-    lv_tabview_set_tab_bar_size(tabview, s_small_screen ? 28 : 40);
+    lv_tabview_set_tab_bar_size(tabview, s_small_screen ? GB_TAB_BAR_HEIGHT_SMALL : GB_TAB_BAR_HEIGHT_LARGE);
     lv_obj_set_width(tabview, LV_PCT(100));
     lv_obj_set_flex_grow(tabview, 1);
 
