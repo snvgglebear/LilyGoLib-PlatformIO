@@ -10,17 +10,25 @@
  * This is the root of the UI. setupGui() (at the bottom of the file) is called
  * once from factory.ino / main.cpp and builds everything else.
  *
- * Screen structure -- the whole UI lives in a two-tile LVGL tileview,
- * `main_screen`:
- *   - tile (0,0) is `menu_panel`, the home screen built by ui_home_build():
- *     a clock (digital or analog, tap to toggle), battery status, and a row
- *     of pinned-link icons capped at PINNED_APPS_MAX_VISIBLE plus a trailing
- *     "All Apps" icon (ui_all_apps.cpp) that lists every registered app.
- *   - tile (0,1) is the container that whichever app is currently open builds
- *     itself into.
- * Opening an app slides to tile 1 (menu_hidden()); closing it slides back
- * (menu_show()). Only one app exists at a time -- its widgets are destroyed on
- * exit.
+ * Screen structure -- the whole UI lives in a three-tile LVGL tileview,
+ * `main_screen`, arranged as an L: clock above home, app beside home:
+ *   - tile (0,0) is `clock_panel`, the clockface built by
+ *     ui_clockface_build(): a full-screen digital or analog clock, tap to
+ *     toggle. The default/resting tile -- swipe down or press BOOT
+ *     (plans/boot-button-input-plan.md) to reach the home screen below it.
+ *   - tile (0,1) is `menu_panel`, the home screen built by ui_home_build():
+ *     battery status and a row of pinned-link icons capped at
+ *     PINNED_APPS_MAX_VISIBLE plus a trailing "All Apps" icon
+ *     (ui_all_apps.cpp) that lists every registered app. Reached from the
+ *     clockface by swiping up, or from an open app via menu_show().
+ *   - tile (1,1) is `app_panel`, the container that whichever app is
+ *     currently open builds itself into. Reached only programmatically
+ *     (open_app()/menu_hidden()) -- its tileview dir is LV_DIR_NONE, since a
+ *     user swipe away from it would slide the tile without running the
+ *     open app's exit_func_cb, leaking whatever timer/task/radio it holds.
+ * Opening an app slides to (1,1) (menu_hidden()); closing it slides back to
+ * (0,1) (menu_show()). Only one app exists at a time -- its widgets are
+ * destroyed on exit.
  *
  * App registration: each `ui_<feature>.cpp` exports a global `app_t` (declared
  * extern here) and is added to the app_registry() table by a register_app()
@@ -45,7 +53,9 @@
 #include "ui_define.h"
 #include "app_config.h"
 #include "ui_home.h"
+#include "ui_clockface.h"
 #include "ui_notification_popup.h"
+#include "ui_power_button.h"
 
 // Icon bitmaps and fonts. These are generated C arrays living in
 // src/factory/src/ and src/factory/src/font/ -- LV_IMG_DECLARE / LV_FONT_DECLARE
@@ -88,7 +98,9 @@ LV_IMG_DECLARE(img_walkie);
 #define SCREEN_TIMEOUT 10000
 
 lv_obj_t *main_screen;              ///< the root tileview; also declared extern in ui_define.h
-lv_obj_t *menu_panel;               ///< the home screen (clock/battery/pinned links) on tile (0,0)
+lv_obj_t *clock_panel;              ///< the clockface (tile (0,0), the default/resting tile)
+lv_obj_t *menu_panel;               ///< the home screen (battery/pinned links) on tile (0,1)
+static lv_obj_t *app_panel;         ///< the open-app container, tile (1,1)
 lv_group_t *menu_g, *app_g;         ///< input focus groups: launcher vs. open app
 static lv_timer_t *disp_timer = NULL;   ///< idle/backlight timeout state machine
 static lv_timer_t *dev_timer = NULL;    ///< periodic device-status (battery etc.) refresh
@@ -133,31 +145,34 @@ bool get_enter_low_power_flag()
 }
 
 /**
- * Return to the launcher: hand focus back to the launcher group, slide to tile
- * (0,0), and restart the idle timer (which is paused while an app is open, so
- * apps do not get blanked mid-use). lv_disp_trig_activity() resets the idle
- * counter so the timeout is measured from now.
+ * Return to the launcher: hand focus back to the launcher group, slide to
+ * tile (0,1) (menu_panel), and restart the idle timer (which is paused while
+ * an app is open, so apps do not get blanked mid-use). lv_disp_trig_activity()
+ * resets the idle counter so the timeout is measured from now.
  */
 void menu_show()
 {
     set_default_group(menu_g);
-    lv_tileview_set_tile_by_index(main_screen, 0, 0, LV_ANIM_ON);
+    lv_tileview_set_tile_by_index(main_screen, 0, 1, LV_ANIM_ON);
     lv_timer_resume(disp_timer);
     lv_disp_trig_activity(NULL);
     hw_feedback();
 }
 
-/// Slide to the app tile and suspend the idle timer. Paired with menu_show().
+/// Slide to the app tile (1,1) and suspend the idle timer. Paired with menu_show().
 void menu_hidden()
 {
-    lv_tileview_set_tile_by_index(main_screen, 0, 1, LV_ANIM_ON);
+    lv_tileview_set_tile_by_index(main_screen, 1, 1, LV_ANIM_ON);
     lv_timer_pause(disp_timer);
 }
 
-/// True when the launcher (rather than an app) is in front.
+/// True when the launcher (rather than the clockface or an app) is in front.
+/// Queries the tileview directly rather than tracking a separate flag, so it
+/// stays correct whether menu_panel was reached programmatically (menu_show())
+/// or by the user swiping up from the clockface.
 bool isinMenu()
 {
-    return !lv_obj_has_flag(main_screen, LV_OBJ_FLAG_HIDDEN);
+    return lv_tileview_get_tile_active(main_screen) == menu_panel;
 }
 
 /**
@@ -195,7 +210,8 @@ void set_default_group(lv_group_t *group)
 
 
 /**
- * Open `app` on tile (0,1): the one launch path declared in ui_define.h.
+ * Open `app` on tile (1,1) (app_panel): the one launch path declared in
+ * ui_define.h.
  *
  * Every icon that can start an app -- the original launcher row, the home
  * screen's pinned-links row, "All Apps" -- calls this instead of duplicating
@@ -214,8 +230,7 @@ void open_app(app_t *app)
     set_default_group(app_g);
     hw_feedback();
     if (app->setup_func_cb) {
-        lv_obj_t *parent = lv_obj_get_child(main_screen, 1);
-        (*app->setup_func_cb)(parent);
+        (*app->setup_func_cb)(app_panel);
     }
     menu_hidden();
 }
@@ -239,7 +254,11 @@ lv_obj_t *create_app_icon(lv_obj_t *parent, const char *name, const lv_img_dsc_t
     lv_coord_t h = LV_PCT(100);
 
     lv_obj_set_size(btn, w, h);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_0, 0);
+    // Was fully transparent (LV_OPA_0), which left icons floating with no
+    // visible tile against the near-black screen -- part of the "app tiles
+    // are too dark" bugfix (src/custom_interface/plan.md's interface_bugfixes).
+    lv_obj_set_style_bg_color(btn, THEME_COLOR_BG_TILE, 0);
+    lv_obj_set_style_bg_opa(btn, THEME_TILE_BG_OPA, 0);
     lv_obj_set_style_outline_color(btn, THEME_COLOR_BLACK, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_shadow_width(btn, THEME_ICON_BUTTON_SHADOW_WIDTH, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(btn, THEME_COLOR_BLACK, LV_PART_MAIN);
@@ -338,11 +357,12 @@ static void hw_device_poll(lv_timer_t *t)
 /**
  * Idle / power-state machine, run periodically by `disp_timer`.
  *
- * Tile (0,0) is the home screen -- clock, battery, pinned links -- built once
- * by ui_home_build() and never hidden, so unlike the original three-state
- * machine there is no separate watch-face page to show or hide here. What's
- * left are two states, entered in sequence as the device stays idle, and any
- * user input collapses straight back to the first:
+ * The clockface (clock_panel) and home screen (menu_panel) are both built
+ * once by ui_clockface_build()/ui_home_build() and never hidden -- just
+ * slid between -- so unlike the original three-state machine there is no
+ * separate watch-face page to show or hide here. What's left are two
+ * states, entered in sequence as the device stays idle, and any user input
+ * collapses straight back to the first:
  *
  *  1. ACTIVE      -- CPU at 240 MHz, keyboard backlight on.
  *
@@ -350,11 +370,12 @@ static void hw_device_poll(lv_timer_t *t)
  *     open app permits it (get_enter_low_power_flag(), set via
  *     set_low_power_mode_flag()). The keyboard backlight is saved and
  *     switched off and the CPU dropped to 80 MHz while the clock keeps
- *     ticking on tile (0,0). The keyboard level is stashed in
+ *     ticking on whichever tile is in front. The keyboard level is stashed in
  *     `keyboard_level` so it can be restored exactly, rather than reset to a
- *     default. `low_power_active` tracks this state (this timer only runs
- *     while tile (0,0) is in front -- see menu_show()/menu_hidden() -- so an
- *     open app is never affected by it).
+ *     default. `low_power_active` tracks this state (this timer is paused
+ *     while an app is open -- see menu_show()/menu_hidden() -- so it only
+ *     ever runs while the clockface or home screen is in front, and an open
+ *     app is never affected by it).
  *
  *     After a further hw_get_disp_timeout_ms() of state 2 (the user setting;
  *     0 disables this step entirely) the backlight is faded out, its level
@@ -439,11 +460,11 @@ static void ui_poll_timer_callback(lv_timer_t *t)
  *   2. Theme: LVGL's dark default theme, restyled by theme_init() in ui_theme.cpp.
  *      MAIN_FONT comes from the per-board block in hal_interface.h, so the text
  *      size matches the panel.
- *   3. Input groups and the two-tile tileview described at the top of this file.
+ *   3. Input groups and the three-tile tileview described at the top of this file.
  *   4. App registration -- the run of register_app() calls below, gated per
  *      board/runtime capability, building the app_registry() table.
- *   5. The home screen (ui_home_build()), then the periodic timers and the
- *      notification-popup listener.
+ *   5. The clockface (ui_clockface_build()) and home screen (ui_home_build()),
+ *      then the periodic timers and the notification-popup listener.
  */
 void setupGui()
 {
@@ -483,9 +504,13 @@ void setupGui()
     lv_obj_align(main_screen, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_set_size(main_screen, LV_PCT(100), LV_PCT(100));
 
-    /* Create two views for switching menus and app UI */
-    menu_panel = lv_tileview_add_tile(main_screen, 0, 0, LV_DIR_HOR);
-    lv_tileview_add_tile(main_screen, 0, 1, LV_DIR_HOR);
+    /* Create the three tiles: clockface above home, app beside home. Only
+       clock_panel <-> menu_panel allow a user swipe (LV_DIR_VER); app_panel
+       is LV_DIR_NONE and reached only via open_app()/menu_hidden() -- see
+       the file header comment for why. */
+    clock_panel = lv_tileview_add_tile(main_screen, 0, 0, LV_DIR_VER);
+    menu_panel  = lv_tileview_add_tile(main_screen, 0, 1, LV_DIR_VER);
+    app_panel   = lv_tileview_add_tile(main_screen, 1, 1, LV_DIR_NONE);
 
     lv_obj_set_scrollbar_mode(main_screen, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(main_screen, LV_OBJ_FLAG_SCROLLABLE);
@@ -599,9 +624,12 @@ void setupGui()
     register_app("Microphone", &img_microphone, &ui_microphone_main, -1);
     register_app("IMU", &img_gyroscope, &ui_sensor_main, -1);
 
-    // Home screen: clock (digital/analog, tap to toggle), battery status, and
-    // the pinned-links row (which reads the table just built through
-    // app_registry()), all built inside tile (0,0).
+    // Clockface: digital/analog, tap to toggle, tile (0,0) -- the default/
+    // resting tile.
+    ui_clockface_build(clock_panel);
+
+    // Home screen: battery status and the pinned-links row (which reads the
+    // table just built through app_registry()), tile (0,1).
     ui_home_build(menu_panel);
 
     disp_timer = lv_timer_create(ui_poll_timer_callback, 1000, NULL);
@@ -609,6 +637,7 @@ void setupGui()
     dev_timer = lv_timer_create(hw_device_poll, 5000, NULL);
 
     ui_notification_popup_init();
+    ui_power_button_init();
     ui_sys_init();
 
     // Allow low power mode

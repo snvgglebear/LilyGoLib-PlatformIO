@@ -32,6 +32,7 @@
 #include "app_config.h"
 #include "app_gadgetbridge.h"
 #include "usable_area/usable_area.h"
+#include "ui_boot_button.h"
 
 // Defined in ui_main.cpp -- builds the launcher screen and all app screens.
 extern void setupGui();
@@ -113,6 +114,8 @@ void setup()
 
     usable_area_init();          // safe-area engine, before any UI is built
 
+    ui_boot_button_init();       // GPIO0 as a runtime input (short/long press)
+
     hw_init();                   // app-level peripheral setup (radio, sensors, audio)
 
     app_gb_init();                // gadgetbridge_ble link, before setupGui() so the
@@ -134,6 +137,7 @@ void loop()
     loopNFCReader();
 #endif
     app_gb_poll();
+    ui_boot_button_poll();
     lv_timer_handler();
     instanceLockGive();
     delay(5);

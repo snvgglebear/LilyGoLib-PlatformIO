@@ -1,13 +1,13 @@
 /**
  * @file      ui_clock_analog.cpp
  * @license   MIT
- * @brief     Analog clock face for the home screen.
+ * @brief     Analog clock face for the clockface screen.
  *
  * Ported from examples/ui/BatmanDial/BatmanDial.ino: hands are lv_line
  * objects, repositioned each second from the RTC. The original drew directly
  * on lv_scr_act() sized to the whole panel; here the dial is sized to
- * whatever container ui_home_build() hands us (the clock band of the home
- * screen), with centre/radius derived from that container instead of the
+ * whatever container ui_clockface_build() hands us (the clockface's own
+ * tile), with centre/radius derived from that container instead of the
  * full screen.
  *
  * Trigonometry note -- screen Y grows downward and 0 degrees points right, so

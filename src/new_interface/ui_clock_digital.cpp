@@ -1,7 +1,7 @@
 /**
  * @file      ui_clock_digital.cpp
  * @license   MIT
- * @brief     Digital clock face for the home screen.
+ * @brief     Digital clock face for the clockface screen.
  *
  * Ported from ui_main.cpp's original setupClock()/clock_update_datetime(),
  * minus the battery bar/label (ui_battery_status.cpp owns that now) so this
@@ -85,14 +85,14 @@ lv_obj_t *ui_clock_digital_create(lv_obj_t *parent)
     lv_obj_t *hour_cont = lv_obj_create(page);
     lv_obj_set_size(hour_cont, w, h);
     lv_obj_align(hour_cont, LV_ALIGN_LEFT_MID, x_offset, y_offset);
-    lv_obj_set_style_bg_opa(hour_cont, LV_OPA_20, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(hour_cont, CLOCK_DIGITAL_BOX_BG_OPA, LV_PART_MAIN);
     lv_obj_set_style_border_opa(hour_cont, LV_OPA_60, LV_PART_MAIN);
     lv_obj_remove_flag(hour_cont, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *min_cont = lv_obj_create(page);
     lv_obj_set_size(min_cont, w, h);
     lv_obj_align(min_cont, LV_ALIGN_RIGHT_MID, -x_offset, y_offset);
-    lv_obj_set_style_bg_opa(min_cont, LV_OPA_20, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(min_cont, CLOCK_DIGITAL_BOX_BG_OPA, LV_PART_MAIN);
     lv_obj_set_style_border_opa(min_cont, LV_OPA_60, LV_PART_MAIN);
     lv_obj_remove_flag(min_cont, LV_OBJ_FLAG_SCROLLABLE);
 

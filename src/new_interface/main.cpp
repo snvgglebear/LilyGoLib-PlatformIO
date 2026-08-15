@@ -23,6 +23,11 @@
  * assuming one, but the curved-bezel clipping it applies is only correct on
  * the Ultra's panel shape.
  *
+ * There is no fourth LVGL/SDL input device for the BOOT button
+ * (ui_boot_button.cpp): it reads SDL's raw keyboard-state array directly for
+ * the 'B' key instead, rather than adding an lv_indev -- see that file's
+ * header comment for why.
+ *
  *     pio run -e emulator_watch_ultra -t exec
  *
  * @see LVGL SDL driver:  https://docs.lvgl.io/master/details/integration/driver/sdl.html
@@ -41,6 +46,7 @@
 #include "hal_interface.h"
 #include "app_gadgetbridge.h"
 #include "usable_area/usable_area.h"
+#include "ui_boot_button.h"
 
 // Same application entry points the Arduino build calls.
 extern void setupGui();     // ui_main.cpp
@@ -87,6 +93,7 @@ void hal_loop(void)
         lv_tick_inc(current - lastTick); // Update the tick timer
         lastTick = current;
         app_gb_poll();
+        ui_boot_button_poll();
         lv_timer_handler();
     }
 }
@@ -99,6 +106,8 @@ extern "C" int main(void)
     printf("hello lvgl\n");
 
     usable_area_init();   // safe-area engine, before any UI is built
+
+    ui_boot_button_init();   // no-op here (SDL key state needs no init), kept for parity
 
     hw_init();
     app_gb_init();         // gadgetbridge_ble link (gb_link_stdio.cpp on this build)

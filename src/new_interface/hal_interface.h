@@ -569,6 +569,22 @@ uint8_t hw_get_disp_backlight();
 bool hw_get_disp_is_on();
 
 /**
+ * @brief Put the display panel to sleep (LilyGoLib's sleepDisplay(): panel
+ * sleep-in command + the display power rail, not just the backlight).
+ * Distinct from hw_set_disp_backlight(0), which only fades the backlight and
+ * is what the idle timer in ui_main.cpp uses -- this is the deeper, explicit
+ * on/off the power button toggles. No-op on the emulator (no display power
+ * rail to control).
+ */
+void hw_sleep_display();
+
+/**
+ * @brief Wake the display panel from hw_sleep_display(). No-op on the
+ * emulator.
+ */
+void hw_wakeup_display();
+
+/**
  * @brief Set the keyboard backlight level.
  *
  * @param level The backlight level to be set.
@@ -1622,6 +1638,18 @@ void hw_set_trackball_callback(void(*callback)(uint8_t dir));
  * @param callback The callback function to set.
  */
 void hw_set_button_callback(void (*callback)(uint8_t idx, uint8_t state));
+
+/**
+ * @brief Set the power (PMU side) button callback.
+ *
+ * Replaces the log-only PMU POWER_EVENT hook installed in hw_init() -- passing
+ * a callback here wires it to fire instead. `long_press` is true for
+ * PMU_EVENT_KEY_LONG_PRESSED, false for PMU_EVENT_KEY_CLICKED. Pass NULL to
+ * remove a previously-set callback. No-op on the emulator (no PMU/instance).
+ *
+ * @param callback The callback function to set.
+ */
+void hw_set_power_button_callback(void (*callback)(bool long_press));
 
 
 /**

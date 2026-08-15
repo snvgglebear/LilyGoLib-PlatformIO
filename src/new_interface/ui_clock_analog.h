@@ -1,7 +1,7 @@
 /**
  * @file      ui_clock_analog.h
  * @license   MIT
- * @brief     Analog clock face for the home screen.
+ * @brief     Analog clock face for the clockface screen.
  */
 #pragma once
 

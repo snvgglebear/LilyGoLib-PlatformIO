@@ -194,3 +194,13 @@ bool ui_notification_popup_get_vibrate(void)
 {
     return s_vibrate;
 }
+
+bool ui_notification_popup_is_showing(void)
+{
+    return s_toast != NULL;
+}
+
+void ui_notification_popup_dismiss(void)
+{
+    dismiss_toast();
+}

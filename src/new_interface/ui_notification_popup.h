@@ -26,3 +26,11 @@ void ui_notification_popup_set_vibrate(bool enable);
 /// Current values, for ui_sys.cpp to initialise its slider/switch from.
 uint32_t ui_notification_popup_get_timeout_ms(void);
 bool ui_notification_popup_get_vibrate(void);
+
+/// True while a toast is currently on screen. Used by ui_boot_button.cpp's
+/// short-press handler to dismiss the toast instead of navigating home.
+bool ui_notification_popup_is_showing(void);
+
+/// Dismiss the current toast immediately (same effect as tapping it or
+/// letting its timeout elapse). Safe to call when no toast is showing.
+void ui_notification_popup_dismiss(void);

@@ -59,6 +59,11 @@ typedef struct _device_const_var {
     uint8_t  charge_steps;
 } device_const_var_t;
 
+/// See hw_set_power_button_callback(). Declared outside the #ifdef ARDUINO
+/// block below since hw_set_power_button_callback() itself is unconditional
+/// (a harmless no-op store on the emulator, where nothing ever reads it).
+static void (*_power_button_cb)(bool long_press) = NULL;
+
 #ifdef ARDUINO
 
 // esp-dsp: hardware-accelerated real FFT and the Hann window generator.
@@ -948,11 +953,21 @@ void hw_init()
 
     hw_set_kb_backlight(user_setting.keyboard_bl_level);
 
-    // Power-button events from the PMU. Currently only logged -- the hook is here
-    // for apps that want to intercept the side button.
+    // Power-button events from the PMU. Dispatched to whatever callback
+    // ui_power_button.cpp registers via hw_set_power_button_callback();
+    // logged either way so the event is visible even before one is set.
     instance.onEvent([](DeviceEvent_t event, void *params, void *user_data) {
-        if (instance.getPMUEventType(params) == PMU_EVENT_KEY_CLICKED) {
+        PMUEventType_t type = instance.getPMUEventType(params);
+        if (type == PMU_EVENT_KEY_CLICKED) {
             log_d("ON EVENT PMU CLICK");
+            if (_power_button_cb) {
+                _power_button_cb(false);
+            }
+        } else if (type == PMU_EVENT_KEY_LONG_PRESSED) {
+            log_d("ON EVENT PMU LONG PRESS");
+            if (_power_button_cb) {
+                _power_button_cb(true);
+            }
         }
     }, POWER_EVENT, NULL);
 
@@ -1428,6 +1443,20 @@ bool hw_get_disp_is_on()
     return instance.getBrightness() != 0;
 #else
     return true;
+#endif
+}
+
+void hw_sleep_display()
+{
+#ifdef ARDUINO
+    instance.sleepDisplay();
+#endif
+}
+
+void hw_wakeup_display()
+{
+#ifdef ARDUINO
+    instance.wakeupDisplay();
 #endif
 }
 
@@ -2630,6 +2659,15 @@ void hw_set_button_callback(ButtonEventCallback callback)
         _button_cb = NULL;
     }
 #endif
+}
+
+void hw_set_power_button_callback(void (*callback)(bool long_press))
+{
+    // The POWER_EVENT instance.onEvent() hook itself is installed
+    // unconditionally in hw_init() (ARDUINO only) and dispatches to
+    // _power_button_cb whenever it is non-NULL, so setting it here is all
+    // that's needed to start/stop receiving events.
+    _power_button_cb = callback;
 }
 
 const char *hw_get_device_power_tips_string()

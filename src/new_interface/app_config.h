@@ -60,7 +60,7 @@
 #define THEME_COLOR_BG_DARK                THEME_COLOR_BLACK       ///< screen / dialog / menu backgrounds
 #define THEME_COLOR_BG_LIGHT               THEME_COLOR_WHITE       ///< light "card" backgrounds (walkie, chat bar, toast buttons)
 #define THEME_COLOR_BG_PANEL                lv_color_hex(0x1a1a1a)  ///< near-black; dark meter/level panel fill (microphone)
-#define THEME_COLOR_BG_DIAL                 lv_color_hex(0x101010)  ///< almost black; analog clock dial fill
+#define THEME_COLOR_BG_DIAL                 lv_color_hex(0x262626)  ///< dark grey; analog clock dial fill (kept clearly lighter than the black screen behind it for contrast)
 #define THEME_COLOR_BG_TOAST               lv_color_hex(0x202020)  ///< very dark grey; notification toast
 #define THEME_COLOR_BG_CHIP_DARK           lv_color_hex(0x2A2A2A)  ///< charcoal; walkie's neutral dark chip/button fill (and its inactive states)
 
@@ -79,6 +79,13 @@
 // Chat bubbles (ui_msgchat.cpp)
 #define THEME_COLOR_CHAT_BUBBLE_SENT       lv_color_hex(0x99ccff)               ///< sky blue
 #define THEME_COLOR_CHAT_BUBBLE_RECEIVED   lv_color_hex(0xe6e6e6)               ///< off-white / pale grey
+
+/// Launcher / pinned-links icon "tile" background (ui_main.cpp's
+/// create_app_icon()). Previously fully transparent (LV_OPA_0), which left
+/// icons floating with no visible tile against the near-black screen --
+/// bumped to a visible dark-grey fill for contrast.
+#define THEME_COLOR_BG_TILE                lv_color_hex(0x2A2A2A)
+#define THEME_TILE_BG_OPA                  LV_OPA_70
 
 // Process-bar gradient (ui_tools.cpp's ui_create_process_bar())
 #define THEME_COLOR_PROGRESS_GRADIENT_START   lv_palette_lighten(LV_PALETTE_GREY, 1)
@@ -124,6 +131,33 @@ enum ClockMode {
     CLOCK_MODE_ANALOG,
 };
 #define CLOCK_MODE_DEFAULT   CLOCK_MODE_DIGITAL
+
+/// Digital clock hour/minute box fill opacity. Was LV_OPA_20 (barely visible
+/// against the near-black screen, part of the "clock is smushed/too dark"
+/// bugfix) -- bumped for contrast. "Smushed together" was actually caused by
+/// the clock being squeezed into a 55%-height band shared with battery/pinned
+/// widgets on the home screen; see ui_clockface.cpp, which now gives it the
+/// full screen the way src/factory's setupClock() always had.
+#define CLOCK_DIGITAL_BOX_BG_OPA   LV_OPA_40
+
+// ---------------------------------------------------------------------------
+// Boot button (GPIO0) -- short press (go home / dismiss toast) and long press
+// (flashlight toggle). See plans/boot-button-input-plan.md.
+// ---------------------------------------------------------------------------
+
+/// How long the raw pin reading must stay low before a press is accepted as
+/// real (not switch bounce).
+#define BOOT_BUTTON_DEBOUNCE_MS     30
+/// Held at least this long before release counts as a long press rather than
+/// a short press.
+#define BOOT_BUTTON_LONG_PRESS_MS   500
+
+// ---------------------------------------------------------------------------
+// Power button (PMU side key) -- single click toggles the display, a second
+// click within this window instead opens the power menu.
+// ---------------------------------------------------------------------------
+
+#define POWER_BUTTON_DOUBLE_PRESS_WINDOW_MS   350
 
 // ---------------------------------------------------------------------------
 // Battery status / low-battery warning
