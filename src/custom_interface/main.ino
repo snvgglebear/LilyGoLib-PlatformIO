@@ -8,6 +8,7 @@
 #include <LV_Helper.h>
 #include <lvgl.h>
 #include "watch_faces/simple_face.h"
+#include "watch_faces/batman_dial.h"   // alternate analog face -- see setup()
 #if defined(ARDUINO_T_WATCH_S3_ULTRA)
 
 /*Two lv_screen_load()-able screens: the watch face is the default/home
@@ -61,7 +62,8 @@ void setup() {
   screen_state_init();
 
   screen_home = lv_screen_active();
-  simple_face_init(screen_home);
+  //simple_face_init(screen_home);
+  batman_dial_init(screen_home);   // swap in for the analog face instead -- also comment out simple_face_init() above
   lv_obj_add_event_cb(screen_home, onHomeGesture, LV_EVENT_GESTURE, NULL);
   screen_state_set_wake_cb(onScreenWake);
 
