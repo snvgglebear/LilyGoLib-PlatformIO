@@ -28,6 +28,13 @@
   the screen root (background, clipping to the rounded shape).*/
 void usable_area_init(void);
 
+/*Applies the same base styling usable_area_init() gives the boot screen
+  (black background, no padding/border/scroll, clipped to the rounded
+  shape) to any other screen object -- e.g. one created with
+  lv_obj_create(NULL) for a second lv_screen_load()-able screen -- so it
+  matches instead of showing the LVGL theme's default look.*/
+void usable_area_style_screen(lv_obj_t *screen);
+
 int32_t safe_area_screen_width(void);
 int32_t safe_area_screen_height(void);
 

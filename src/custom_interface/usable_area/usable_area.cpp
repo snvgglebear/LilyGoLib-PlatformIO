@@ -9,16 +9,20 @@ void usable_area_init(void)
     screen_w = lv_display_get_horizontal_resolution(NULL);
     screen_h = lv_display_get_vertical_resolution(NULL);
 
-    lv_obj_t *root = lv_screen_active();
-    lv_obj_set_style_bg_color(root, lv_color_black(), 0);
-    lv_obj_set_style_pad_all(root, 0, 0);
-    lv_obj_set_style_border_width(root, 0, 0);
-    lv_obj_remove_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+    usable_area_style_screen(lv_screen_active());
+}
+
+void usable_area_style_screen(lv_obj_t *screen)
+{
+    lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+    lv_obj_set_style_pad_all(screen, 0, 0);
+    lv_obj_set_style_border_width(screen, 0, 0);
+    lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
     /*Clip children to the rounded shape. Purely visual - it makes overflow
       invisible rather than preventing it, and does not affect hit testing.*/
-    lv_obj_set_style_radius(root, BEZEL_RADIUS, 0);
-    lv_obj_set_style_clip_corner(root, true, 0);
+    lv_obj_set_style_radius(screen, BEZEL_RADIUS, 0);
+    lv_obj_set_style_clip_corner(screen, true, 0);
 }
 
 int32_t safe_area_screen_width(void)
@@ -63,6 +67,7 @@ lv_obj_t *safe_area_rect(lv_obj_t *parent)
     lv_obj_set_size(cont, screen_w - 2 * SAFE_INSET, screen_h - 2 * SAFE_INSET);
     lv_obj_center(cont);
     lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_pad_all(cont, 0, 0);
     lv_obj_remove_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
     return cont;

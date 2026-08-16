@@ -954,15 +954,16 @@ void buildMusicTab(lv_obj_t *tab)
 
 } // namespace
 
-void gb_ui_begin()
+void gb_ui_begin(lv_obj_t *screen)
 {
     s_small_screen = lv_display_get_horizontal_resolution(NULL) <= 320;
 
-    // usable_area_init() already painted the root black and clipped it to the
-    // bezel's rounded shape; safe_area_rect() gives the app content the
-    // largest rect that is provably safe everywhere inside that shape, so tab
-    // bar buttons and list rows near the top/bottom are never under the glass.
-    lv_obj_t *screen = safe_area_rect(lv_screen_active());
+    // The caller already painted @p screen black and clipped it to the
+    // bezel's rounded shape (usable_area_init()/usable_area_style_screen());
+    // safe_area_rect() gives the app content the largest rect that is
+    // provably safe everywhere inside that shape, so tab bar buttons and
+    // list rows near the top/bottom are never under the glass.
+    screen = safe_area_rect(screen);
     lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
 
     buildStatusBar(screen);

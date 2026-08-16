@@ -13,10 +13,14 @@
  */
 #pragma once
 
+#include <lvgl.h>
+
 #include "gb_app.h"
 
-/// Build the screens. Call after usable_area_init() and before gb_app.begin().
-void gb_ui_begin();
+/// Build the screens onto @p screen. Call after usable_area_init() (or, if
+/// @p screen isn't the boot screen, usable_area_style_screen(screen)) and
+/// before gb_app.begin().
+void gb_ui_begin(lv_obj_t *screen);
 
 /// Listener handed to GbApp::begin(); refreshes whatever the change affected.
 void gb_ui_on_state_changed(GbStateChange change);
