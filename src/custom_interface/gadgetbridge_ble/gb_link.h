@@ -4,14 +4,17 @@
  * @brief     Transport-facing API: how the app talks to whatever carries the
  *            protocol lines.
  *
- * gb_ble.cpp is the only implementation provided here: the Nordic UART Service
- * over BLE (§1), gated on `ARDUINO` like the rest of this app. src/gadgetbridge
- * also has a stdin/stdout implementation (gb_link_stdio.cpp) for its
- * native/SDL2 emulator build -- port that in alongside gb_ble.cpp if
- * custom_interface grows an emulator entry point.
+ * Two implementations exist, chosen at compile time by the build:
  *
- * Everything here is called from the Arduino loop() context only. The BLE
- * implementation does its own hand-off from the NimBLE host task.
+ *   - gb_ble.cpp         Nordic UART Service over BLE (§1), gated on
+ *                        `ARDUINO`, the real thing.
+ *   - gb_link_stdio.cpp  stdin/stdout, for the native/SDL2 emulator build
+ *                        (`pio run -e emulator_watch_ultra -t exec`), ported
+ *                        from src/gadgetbridge's version unchanged.
+ *
+ * Everything here is called from the Arduino loop() / native main loop
+ * context only. The BLE implementation does its own hand-off from the
+ * NimBLE host task.
  */
 #pragma once
 

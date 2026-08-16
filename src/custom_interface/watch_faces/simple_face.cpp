@@ -16,10 +16,15 @@
 
 #include "simple_face.h"
 
+#include "../usable_area/usable_area.h"
+
+#ifdef ARDUINO
 #include <LilyGoLib.h>
 #include <LV_Helper.h>
-
-#include "../usable_area/usable_area.h"
+#else
+#include <stdlib.h>
+#include <time.h>
+#endif
 
 static lv_obj_t *label_time;
 static lv_obj_t *label_date;
@@ -84,18 +89,43 @@ static void refresh(lv_timer_t *t)
 {
     LV_UNUSED(t);
 
+#ifdef ARDUINO
     RTC_DateTime now = instance.rtc.getDateTime();
-
-    lv_label_set_text_fmt(label_time, "%02u:%02u", now.getHour(), now.getMinute());
-    lv_label_set_text_fmt(label_date, "%s  %04u-%02u-%02u",
-                          weekday_name(now.getDay()), now.getYear(), now.getMonth(), now.getDay());
+    uint8_t hour = now.getHour();
+    uint8_t minute = now.getMinute();
+    // getWeek() is the weekday (0-6); getDay() is the day of month -- see
+    // SensorRTC.h's own RTC_DateTime::printDatetime() for the same pairing.
+    uint8_t week = now.getWeek();
+    uint16_t year = now.getYear();
+    uint8_t month = now.getMonth();
+    uint8_t day = now.getDay();
 
     int percent = instance.pmu.getBatteryPercent();
     if (percent < 0) percent = 0;
+    bool charging = instance.pmu.isCharging();
+#else
+    // No RTC/PMU on the host -- the wall clock stands in for the one, a
+    // fixed/jittered reading for the other. Same shape as
+    // src/factory/hal_interface.cpp's native stub (30 + rand() % 71).
+    time_t raw = time(NULL);
+    struct tm *lt = localtime(&raw);
+    uint8_t hour = lt->tm_hour;
+    uint8_t minute = lt->tm_min;
+    uint8_t week = lt->tm_wday;
+    uint16_t year = lt->tm_year + 1900;
+    uint8_t month = lt->tm_mon + 1;
+    uint8_t day = lt->tm_mday;
+
+    int percent = 30 + rand() % 71;
+    bool charging = false;
+#endif
+
+    lv_label_set_text_fmt(label_time, "%02u:%02u", hour, minute);
+    lv_label_set_text_fmt(label_date, "%s  %04u-%02u-%02u",
+                          weekday_name(week), year, month, day);
 
     lv_bar_set_value(bar_batt, percent, LV_ANIM_OFF);
-    lv_label_set_text_fmt(label_batt, "%d%%  %s", percent,
-                          instance.pmu.isCharging() ? "charging" : "");
+    lv_label_set_text_fmt(label_batt, "%d%%  %s", percent, charging ? "charging" : "");
 }
 
 void simple_face_init(lv_obj_t *screen)
