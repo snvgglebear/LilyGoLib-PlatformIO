@@ -186,7 +186,22 @@ void ManageSleepState() {
         screen_asleep = true;
     }
 }
+void CreateButtonGrid(void) {
+    lv_obj_t * screen = lv_screen_active();
 
+    /* One row with four differently-flagged buttons */
+    lv_obj_t * buttonmatrix = lv_buttonmatrix_create(screen);
+    lv_obj_set_style_pad_all(buttonmatrix, 0, 0);
+    lv_obj_set_style_pad_row(buttonmatrix, SAFE_INSET, 0);
+    lv_obj_set_style_pad_column(buttonmatrix, SAFE_INSET, 0);
+    lv_obj_set_align(buttonmatrix, LV_ALIGN_CENTER);
+    lv_obj_set_size(buttonmatrix, lv_pct(90), 80);
+    static const char * buttonmatrix_map_0[] = {"Normal", "Checked", "Disabled", "Hidden", NULL};
+    lv_buttonmatrix_set_map(buttonmatrix, buttonmatrix_map_0);
+    static const lv_buttonmatrix_ctrl_t buttonmatrix_ctrl_map_1[] = {LV_BUTTONMATRIX_CTRL_NONE, (lv_buttonmatrix_ctrl_t)(LV_BUTTONMATRIX_CTRL_CHECKABLE | LV_BUTTONMATRIX_CTRL_CHECKED), LV_BUTTONMATRIX_CTRL_DISABLED, LV_BUTTONMATRIX_CTRL_HIDDEN};
+    lv_buttonmatrix_set_ctrl_map(buttonmatrix, buttonmatrix_ctrl_map_1);
+
+ }
 void setup()
 {
     Serial.begin(115200);
@@ -211,7 +226,8 @@ void setup()
     /*Pick one - both build a tileview on the active screen, so running both
       stacks them on top of each other.*/
     //lv_example_tileview_l_shape();
-    lv_example_tileview_full_bleed();
+    CreateButtonGrid();
+    //lv_example_tileview_full_bleed();
     // label1 = lv_label_create(lv_screen_active());
     // lv_label_set_long_mode(label1, LV_LABEL_LONG_SCROLL);
     // lv_obj_set_width(label1, LV_PCT(90));

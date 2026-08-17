@@ -118,7 +118,12 @@ void trayGestureCb(lv_event_t *e)
 void brightnessSliderCb(lv_event_t *e)
 {
     lv_obj_t *slider = static_cast<lv_obj_t *>(lv_event_get_target(e));
-    qst_hal_set_brightness(lv_slider_get_value(slider));
+    int level = lv_slider_get_value(slider);
+    qst_hal_set_brightness(level);
+
+    int min = qst_hal_brightness_min();
+    int max = qst_hal_brightness_max();
+    lv_label_set_text_fmt(s_brightness_pct_label, "%d%%", (level - min) * 100 / (max - min));
 }
 
 lv_obj_t *makeBand(lv_obj_t *tray, int32_t y, int32_t height)

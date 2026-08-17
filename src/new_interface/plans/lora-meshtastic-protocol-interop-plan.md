@@ -16,7 +16,11 @@ matters (both phone apps on one handset share a single link; see §4.2), and it
 concealed a real constraint the plan had missed: the two 128-bit service UUIDs do not
 both fit in the advertising payload (§5.3, §9 risk 8). §7 gains the one phone-side
 integration route that genuinely exists, for the record, without changing this plan's
-scope.
+scope. Also added the same day: **§4.1a** (why the watch does not *have* to be a node
+to send messages, and what the node role buys for its price) and **§11** (the
+duty-cycle decision — how much of the time the watch is actually a mesh member —
+promoted out of §10.5's closing footnote and inserted into §6 as step 3, since
+§5.4's shape depends on it).
 
 **Target:** the `new_interface` branch of this repo (`/workspaces/LilyGoLib-PlatformIO`),
 `src_dir = src/new_interface`. Files that would be added or changed:
@@ -313,6 +317,45 @@ protocol/preset changes. This plan does not shrink that estimate — it removes 
 smaller "(a) first" milestone that used to sit in front of it, since a client to a
 separate node was never what was asked for.
 
+### 4.1a Does the watch have to be a node just to send messages? — asked 2026-08-17
+
+No. Sending into a Meshtastic mesh requires *a* node; it does not require the watch to
+be that node. Recorded here because the answer is the sharpest way to see what §4.0's
+decision actually buys, and what it costs.
+
+In Meshtastic's own model, a **client** (the phone app, `meshtastic-python`, a web
+client) does not own a radio. It attaches to a node over BLE/serial/TCP, and the node
+does the transmitting on its behalf. Critically, **the client/node link carries
+plaintext `Data`** (§3) — the node performs channel encryption, routing and hop
+management itself. So a client-role watch would need:
+
+- nanopb and the `ToRadio`/`FromRadio`/`MeshPacket` subset of the schema (§5.1, and a
+  reduced §5.2) — **still required**;
+- a BLE **central** role to connect out to a node — the one thing §4.2 says the
+  node-role design avoids;
+
+and would need *none* of: regional frequency-plan and modem-preset tables (§4.1 item
+2), AES-CTR channel crypto (item 3), flood routing and dedupe (item 4), node identity
+and key persistence (item 5), or regulatory region gating (item 6). That is the
+majority of §4.1's scope and effectively all of its hard, silently-failing parts.
+
+What the watch gives up by not being a node:
+
+- **Its own presence on the mesh.** A client shares the node ID of whatever node it
+  is attached to; messages sent from the watch appear to the mesh as coming from that
+  node, not from the watch. Other operators do not see a "watch" in their node list.
+- **Working alone.** A client is useless without a node in BLE range. The watch stops
+  being a self-contained mesh device and becomes a second screen for one.
+- **Relaying.** A client never carries anyone else's traffic. It is not an antenna
+  for the mesh in any sense.
+
+The user's goal, reaffirmed 2026-08-17, is a watch that is itself a mesh
+node/antenna, so §4.0 stands and this subsection changes nothing in the plan. It is
+here so the trade is on the record: the node role is chosen for presence,
+independence and relaying, and its price is items 2-6 plus §11's duty-cycle problem.
+A third option that requires no watch-side Meshtastic code at all — sending through
+the phone's Meshtastic app via Gadgetbridge — is in §7.1.
+
 ### 4.2 What gets simpler: no BLE-central role needed
 
 The pre-revision plan's top-flagged risk — "NimBLE central + peripheral concurrency
@@ -518,22 +561,26 @@ always-available on/off switch and this narrower, config-dependent gate relate.
    one `onConnect` or two. Do this before §5.1: if (c) is wrong, or if no advertising
    strategy works, the coexistence design changes and everything downstream is built
    on a false premise.
-3. **§5.1** nanopb toolchain — prove a round-trip encode/decode of one trivial
+3. **§11 duty-cycle decision**, with §11.2's light-sleep spike folded into step 2's
+   hardware session (same character, same cost). §5.4's shape depends on the answer,
+   and a bad answer here is a reason to revisit §7.1 before spending §5.1-§5.2's
+   effort — so decide it while that is still cheap.
+4. **§5.1** nanopb toolchain — prove a round-trip encode/decode of one trivial
    message compiles and runs correctly in `emulator_watch_ultra` before anything
    else. Highest-uncertainty *build* item, and it blocks everything downstream;
-   only the §5.3 spike above, which needs none of it, comes first.
-4. **§5.2** pull in the full proto subset + `.options` files, generate, confirm the
+   only steps 2-3 above, which need none of it, come first.
+5. **§5.2** pull in the full proto subset + `.options` files, generate, confirm the
    generated structs match what Meshtastic's own client API examples show on the
    wire (cross-check against `meshtastic-python`'s BLE interface output, or a real
    node's own byte stream, if possible).
-5. **§5.4** `meshtastic_node/` module: radio bring-up (gated on §10) → config
+6. **§5.4** `meshtastic_node/` module: radio bring-up (gated on §10) → config
    handshake → channel crypto → routing → node database, tested against the real
    Meshtastic phone app and, ideally, a real second Meshtastic node to confirm actual
    mesh interop (not just a watch↔phone round trip).
-6. **§5.6** regulatory defaults, once region config (part of §5.2/§5.4) exists to
+7. **§5.6** regulatory defaults, once region config (part of §5.2/§5.4) exists to
    enforce against.
-7. **§5.5** on-watch status UI.
-8. Update `.claude/twatch-ultra-ble-protocol.md` only if §10.3's phone-syncable
+8. **§5.5** on-watch status UI.
+9. Update `.claude/twatch-ultra-ble-protocol.md` only if §10.3's phone-syncable
    on/off flag is added to the `settings` message — see the companion edit to
    `watch-settings-sync-protocol-plan.md`. Nothing else in this plan touches the
    Gadgetbridge contract.
@@ -605,6 +652,8 @@ if ever wanted.
 | Gadgetbridge fork + Meshtastic app, **same phone** | Both stay functional over the one shared link (§4.2); serial log shows a single `onConnect`. Neither app's MTU or connection-interval needs disturb the other enough to break it |
 | Gadgetbridge fork + Meshtastic app, **two different devices** | Two real connections; watch serves both, or the single-`s_conn_handle` assumption in `gb_ble.cpp` is fixed to track them separately (§4.2) |
 | Meshtastic app scans while Gadgetbridge is connected | Watch is discoverable on the Meshtastic service UUID under whichever §5.3 advertising strategy was chosen, and the Gadgetbridge name still matches protocol doc §3's regex |
+| Screen off / watch idle, another node sends traffic needing a relay | Per whichever §11 option was chosen: C relays it; B relays it if it lands in a wake window; A does not relay at all. The point of the test is that the *chosen* behaviour is what actually happens — not that relaying always works |
+| Wrist drops (screen off) mid-conversation with the Meshtastic app | BLE connection survives the idle light sleep, or §11.2's spike already established it does not and the design accounts for it |
 | Node goes out of range of other mesh members | No crash; node database entries age out or are marked stale rather than accumulating indefinitely |
 | Malformed/unexpected `ToRadio` frame from the phone app | Dropped without crashing the parser, mirroring Gadgetbridge protocol's "malformed JSON drops that line only" resilience posture |
 | Send a text message from the watch | Arrives at a real Meshtastic client (phone app, second node) as a normal `TEXT_MESSAGE_APP` packet — the actual interop proof |
@@ -813,7 +862,81 @@ blunt watch-level override:
   exactly such a service: unlike today's apps (which hold `DEVICE_CAN_SLEEP`
   cleared only while their own screen is open), the node needs to keep receiving
   even when the user has navigated away entirely, which the current per-app flag
-  does not model. Flagged as an open design question for whenever §5.4 is built —
-  whether light sleep on this SoC/LilyGoLib version preserves LoRa SPI/IRQ handling
-  well enough for a node to keep receiving through it is unverified and should be
-  spiked alongside the §6 step 2 BLE work, not assumed either way.
+  does not model. **Promoted out of this footnote into §11**, which costs the options
+  out and makes it a decision to take before §5.4 rather than during it.
+
+## 11. Duty cycle: how much of the time is the watch actually a mesh member?
+
+Added 2026-08-17, promoted from §10.5's closing paragraph. This is the decision where
+"smartwatch" and "mesh node/antenna" genuinely pull against each other, and it is not
+protocol work — none of §5's items answer it. It shapes what `mtc_node.*` (§5.4) is,
+so take it before building that, not during.
+
+### 11.1 The conflict, concretely
+
+A mesh node is useful to *other people* in proportion to how much of the time it is
+listening. A watch is useful to its wearer in proportion to how little of the time its
+SoC is awake. In this checkout the second goal currently wins unconditionally:
+
+- The idle path light-sleeps the SoC (`hw_low_power_loop()`,
+  `hal_interface.cpp:2248`, calling `instance.lightSleep()`), driven by
+  `ui_main.cpp`'s poll timer with a 240→80 MHz downclock before it.
+- Whether the SoC may sleep at all is a single global flag,
+  `set_low_power_mode_flag()` / `DEVICE_CAN_SLEEP` (`ui_main.cpp:96,132`), which apps
+  clear only while *their own screen is in front* (`ui_nfc.cpp:68`, `ui_msg.cpp:48`,
+  `ui_boot_button.cpp:108`). There is no representation of "a background service needs
+  the SoC awake regardless of what is on screen" — which is exactly what a mesh node
+  is.
+- The radio's DIO1 handler (`hw_sx1262.cpp:52`) is a normal attached interrupt that
+  sets an event-group bit. A plain GPIO interrupt does **not** wake an ESP32 out of
+  light sleep unless that pin is separately registered as a light-sleep wake source.
+
+### 11.2 Prerequisite spike (do this first — it may remove options)
+
+Two unverified facts gate everything below, both testable against today's firmware
+with no Meshtastic code in front of them:
+
+1. **Can DIO1 wake the SoC from `instance.lightSleep()`?** If not, options B and C
+   below require either changing how LilyGoLib's light sleep is entered, or keeping
+   the SoC out of light sleep entirely whenever the node is enabled — which collapses
+   B into C on power terms.
+2. **Does an active BLE connection survive `instance.lightSleep()`?** The comment at
+   `hal_interface.cpp:2240-2247` claims timers, WiFi and the RTC keep running but says
+   nothing about the BLE controller. If a connected Gadgetbridge or Meshtastic app
+   drops on every idle sleep, that constrains the answer independently of LoRa.
+
+Run this alongside §6 step 2's BLE spike — same "cheap, hardware-only, no toolchain"
+character.
+
+### 11.3 The options
+
+| | A. On-demand | B. Duty-cycled | C. Always-on RX |
+| --- | --- | --- | --- |
+| **RX window** | Only while the Meshtastic app is connected or the watch's mesh screen is open | Periodic wake windows, per Meshtastic's own `power.proto` (`ls_secs`, `min_wake_secs`) | Continuous whenever `hw_lora_radio_allowed()` (§10.5) is true |
+| **Is it an antenna?** | No — relays nothing, invisible between sessions | Partly — relays what lands in a wake window; other nodes see a node with latency | Yes — a real relay |
+| **Mesh peers see** | A node that is almost always absent | A slow but present node | A normal node |
+| **Battery cost** | Effectively nil beyond today | Proportional to duty cycle; the tunable knob | Highest: continuous SX1262 RX is a datasheet-order few-to-low-tens of mA, against a watch cell — **measure before committing**, do not trust this row |
+| **Code cost** | Lowest — reuses the existing per-app `DEVICE_CAN_SLEEP` model unchanged | Highest — needs a background-service concept in `ui_main.cpp`'s sleep machine, DIO1 wake (§11.2), and `power.proto` in §5.2's schema | Middle — needs the same background-service concept, but no duty-cycle state machine; node enabled ⇒ never set `DEVICE_CAN_SLEEP` |
+| **Honest summary** | A Meshtastic *client* that happens to own the radio — see §4.1a for why that is nearly the same product as not being a node at all | What real battery-powered Meshtastic nodes do | A mesh node that is also a watch, with the battery life that implies |
+
+### 11.4 Recommendation
+
+**Build C, ship B.** They share the one structural change — teaching `ui_main.cpp`'s
+sleep machine that a background service can hold the SoC awake independently of the
+front screen — and C is that change with no state machine on top, which makes it the
+right first target: it proves the node genuinely relays, on hardware, before any
+power tuning muddies the picture of whether the mesh behaviour itself is correct.
+Then add `power.proto`'s duty-cycling (B) as the shipping default once relaying is
+proven, since B is Meshtastic's own answer to exactly this problem and is configured
+from the phone app like any other node's power config, requiring no watch UI.
+
+A is not recommended for the stated goal: per §4.1a, a node that only listens while
+you are looking at it delivers presence and independence but not the antenna, which
+is most of what the node role was chosen for — while still costing every item in
+§4.1. If A turns out to be the only viable option after §11.2, that is a signal to
+revisit §7.1's much cheaper phone-side route rather than to build §4.1 for an
+on-demand-only node.
+
+Whichever is chosen, §10.5's battery-saver override sits underneath it unchanged: at
+`LORA_BATTERY_SAVER_PERCENT` the radio stops regardless, and the watch drops off the
+mesh exactly as §10.4 describes.
