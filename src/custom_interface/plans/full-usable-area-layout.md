@@ -1,16 +1,16 @@
 # Plan: make the Gadgetbridge UI use the full usable area
 
 `gb_ui_begin()` builds its entire persistent screen (status bar + tabview)
-inside a single `safe_area_rect()`. That call is the right tool for a
+inside a single `usable_area_rect()`. That call is the right tool for a
 fixed-size overlay (it's exactly what the thread view and the msgbox popups
 need), but it's the wrong shape for the *whole* screen: it trades away real
 usable space in a way `usable_area.cpp`'s other primitives
-(`safe_area_place()`, `safe_area_inset_for_band()`) exist specifically to
+(`usable_area_place()`, `usable_area_inset_for_band()`) exist specifically to
 avoid.
 
-## 1. Why `safe_area_rect()` under-uses the panel
+## 1. Why `usable_area_rect()` under-uses the panel
 
-`safe_area_rect()` returns the largest axis-aligned rectangle that fits
+`usable_area_rect()` returns the largest axis-aligned rectangle that fits
 inside the curved bezel *no matter where on it you look* - one inset,
 applied on all four sides, sized so the rectangle's own corners just touch
 the arc:
@@ -23,24 +23,24 @@ That formula only works by shrinking the rectangle on *every* side,
 including top and bottom. Concretely, on the Ultra's 410x502 panel
 (`usable_area.h`'s own numbers) with `BEZEL_RADIUS = 120`:
 
-| Region | What `safe_area_rect()` does |
+| Region | What `usable_area_rect()` does |
 |---|---|
 | y = 0..36 and y = 466..502 (72px total) | **Excluded entirely** - the rect starts at y=36 and ends at y=466, so this vertical space is never used at all. |
 | y = 36..466 (the rest) | Inset 36px on both sides -> width capped at 338px, uniformly, even in the middle of the screen where the panel is already at full width. |
 
-`safe_area_inset_at(y)` (already written, already used by `safe_area_place()`
+`usable_area_inset_at(y)` (already written, already used by `usable_area_place()`
 for the popups' one-off placements) says the *actual* required inset only
 gets that large near the very top/bottom corners - it's 0 for the whole
 flat section between the two arcs (`y` outside `[0, BEZEL_RADIUS)` and
 `[screen_h - BEZEL_RADIUS, screen_h)`, i.e. roughly y = 120..382 here). So
-for most of the screen's height, content built inside `safe_area_rect()` is
+for most of the screen's height, content built inside `usable_area_rect()` is
 ~72px narrower than it needs to be, and the screen is ~72px shorter than it
 needs to be - both at once, because one flat number is doing the job of
 what should be a curve-shaped one.
 
 The individual popups (`makeSafeMsgbox()`) already size against
-`safe_area_screen_width()/height()` rather than nesting inside
-`safe_area_rect()`, so they're a smaller version of the same
+`usable_area_screen_width()/height()` rather than nesting inside
+`usable_area_rect()`, so they're a smaller version of the same
 give-something-up-everywhere shape, just for a floating box rather than the
 whole screen. This plan is only about the persistent screen scaffold built
 in `gb_ui_begin()` - the popups are already using the API in the way it's
@@ -51,7 +51,7 @@ it turns out they also read as cramped).
 
 Split the screen into three vertical bands with known, fixed heights instead
 of one uniformly-inset region, and size each band's width to *its own*
-worst-case inset via `safe_area_inset_for_band()` (what `safe_area_place()`
+worst-case inset via `usable_area_inset_for_band()` (what `usable_area_place()`
 already wraps) instead of the whole-screen worst case:
 
 ```
@@ -73,7 +73,7 @@ that actually holds lists, bubbles, and buttons and benefits from the extra
 
 Naively starting the content band right where the header ends (e.g. y=30,
 if the header is only as tall as today's status bar) doesn't help much -
-`safe_area_inset_for_band()` over y=30..(screen_h - footer_h) is *dominated
+`usable_area_inset_for_band()` over y=30..(screen_h - footer_h) is *dominated
 by* the inset at y=30, which is still deep in the curve (roughly 40px at
 y=30, worse than today's flat 36px). The fix isn't a smaller header, it's
 sizing the header so the content band's top edge clears most of the curve
@@ -84,7 +84,7 @@ smallest height its own content needs.
 
 Concretely: pick `header_h` (and the matching `footer` band height, working
 up from the bottom) close enough to `BEZEL_RADIUS` that
-`safe_area_inset_for_band(header_h, screen_h - footer_h - header_h)`
+`usable_area_inset_for_band(header_h, screen_h - footer_h - header_h)`
 comes out small - not necessarily zero, but a lot closer to it than 36px.
 The header/footer then have some empty-looking vertical space in them next
 to the status text / tab icons; that's the same trade as today's, just
@@ -96,7 +96,7 @@ being spent on the whole screen.
 Today:
 
 ```cpp
-lv_obj_t *screen = safe_area_rect(lv_screen_active());
+lv_obj_t *screen = usable_area_rect(lv_screen_active());
 lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
 buildStatusBar(screen);
 lv_obj_t *tabview = lv_tabview_create(screen);
@@ -110,10 +110,10 @@ Target shape:
 // clipped it; individual bands below pick their own widths.
 lv_obj_t *screen = lv_screen_active();
 
-lv_obj_t *header = safe_area_place(screen, 0, HEADER_H);
+lv_obj_t *header = usable_area_place(screen, 0, HEADER_H);
 buildStatusBar(header);
 
-lv_obj_t *content = safe_area_place(screen, HEADER_H, CONTENT_H);
+lv_obj_t *content = usable_area_place(screen, HEADER_H, CONTENT_H);
 lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
 lv_obj_t *tabview = lv_tabview_create(content);
 ... (unchanged from here down)
@@ -124,12 +124,12 @@ lv_obj_t *footer_spacer ... // the tab bar is lv_tabview's own bottom strip,
 
 `buildStatusBar()`'s internals don't need to change - it already lays out
 with `LV_PCT(100)` and flex, so it just inherits whatever width `header`
-(via `safe_area_place()`) hands it. Same for the tab pages under `content`.
+(via `usable_area_place()`) hands it. Same for the tab pages under `content`.
 
 `HEADER_H`, `CONTENT_H` (and the tab bar's own height, already
 `GB_TAB_BAR_HEIGHT_LARGE`/`_SMALL` from `gb_ui_metrics.h`) become the
 knobs: add them next to those constants, sized so
-`safe_area_inset_for_band()` over the content band comes out small (see
+`usable_area_inset_for_band()` over the content band comes out small (see
 §2). This needs a hardware/emulator round of eyeballing to land on numbers
 that look right rather than deriving them purely on paper - the constants
 in `gb_ui_metrics.h` were clearly tuned that way too (`GB_TAB_BAR_HEIGHT_*`
@@ -141,7 +141,7 @@ differs 48 vs 34 between boards, not derived from a formula in the file).
 back - the tab bar itself (`lv_tabview_set_tab_bar_position/size`) is drawn
 by the tabview widget as part of its own box, not a sibling container this
 code positions. That means the "footer" band in §2 isn't something
-`gb_ui_begin()` can `safe_area_place()` independently the way it can the
+`gb_ui_begin()` can `usable_area_place()` independently the way it can the
 header - the tabview's own width (from `content` above) determines the tab
 bar's width too, and the tab bar inherits whatever inset `content` was
 given for its *worst* y (which, if `content` runs all the way down to
@@ -183,7 +183,7 @@ be pixel-identical to the real cover glass's optical curve.
 ## 6. Risks / non-goals
 
 - This only touches `gb_ui_begin()`'s top-level scaffold. `makeSafeMsgbox()`
-  and the thread view (`openThread()`, already using `safe_area_rect()`
+  and the thread view (`openThread()`, already using `usable_area_rect()`
   deliberately for a floating overlay) are out of scope - flag as a
   possible follow-up, don't fold into this change.
 - `s_small_screen` (T-Watch-S3, 240x240, presumably no curved bezel /
@@ -191,6 +191,6 @@ be pixel-identical to the real cover glass's optical curve.
   not the Ultra's - check whether `BEZEL_RADIUS`/`SAFE_INSET` even apply
   there before assuming this plan's math carries over unchanged.
 - Any content that currently assumes it's centered inside a shorter,
-  narrower `safe_area_rect()` (padding, alignment) will need re-checking
+  narrower `usable_area_rect()` (padding, alignment) will need re-checking
   against the new wider/taller bounds - `buildWatchTab()`'s centered flex
   layout in particular, since its column will now be visibly wider.

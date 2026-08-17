@@ -1,7 +1,7 @@
 #include <LilyGoLib.h>
 #include <LV_Helper.h>
 #include <bosch/BoschSensorDataHelper.hpp>
-#include <usable_area/usable_area.h>
+#include <usable_area.h>
 
 
 #if defined(ARDUINO_T_WATCH_S3_ULTRA)
@@ -91,7 +91,7 @@ void lv_example_canvas_rectangle(void)
   corner arcs. Whatever background does fall in a corner is hidden by the
   screen's clip_corner, set in usable_area_init().
 
-  Costs nothing in usable content area versus safe_area_rect() - the content
+  Costs nothing in usable content area versus usable_area_rect() - the content
   box is the same 338x430 - but avoids the 36 px black border around it.*/
 void lv_example_tileview_full_bleed(void)
 {

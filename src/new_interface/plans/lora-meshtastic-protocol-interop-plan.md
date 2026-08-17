@@ -10,6 +10,14 @@ later" call; §1-§3 (background research) are unchanged and still accurate as o
 2026-08-15. §4 onward is rewritten below. A new §10 adds the requested persisted LoRa
 radio on/off setting.
 
+**Revision (2026-08-17):** §4.2, §5.3, §8 and §9 risk 1 are corrected — the
+"two concurrent BLE connections" concern was overstated for the case that actually
+matters (both phone apps on one handset share a single link; see §4.2), and it
+concealed a real constraint the plan had missed: the two 128-bit service UUIDs do not
+both fit in the advertising payload (§5.3, §9 risk 8). §7 gains the one phone-side
+integration route that genuinely exists, for the record, without changing this plan's
+scope.
+
 **Target:** the `new_interface` branch of this repo (`/workspaces/LilyGoLib-PlatformIO`),
 `src_dir = src/new_interface`. Files that would be added or changed:
 
@@ -133,7 +141,7 @@ for reasons specific to what Meshtastic actually is:
   withdrawn original plan, which had the watch as a BLE *central* pairing outward to
   someone else's node — see §4.2) — it is a second GATT service hosted by the same
   NimBLE peripheral. Still two independent things that must coexist correctly
-  (§4.2, §9 risk 1), just a materially smaller integration problem than dual-role
+  (§4.2, §9 risk 8), just a materially smaller integration problem than dual-role
   central+peripheral would have been.
 - **Different consumer, different lifecycle.** Gadgetbridge messages are consumed by
   one phone app the watch is bonded to for general watch control. Meshtastic packets
@@ -317,16 +325,38 @@ it, both hosted by the one NimBLE GATT server already running. No scanning, no
 central-mode connection state machine, no bonding-as-client logic is needed anywhere
 in this plan.
 
-What replaces it as the real open question (§9 risk 1): whether the ESP32-S3 BLE
-controller and NimBLE-Arduino's peripheral role can hold **two independent
-concurrent central connections** at once — the phone's Gadgetbridge fork on one link,
-and whatever device is running the Meshtastic app on the other (which will often be
-the *same* physical phone, just a second app and a second BLE connection to the same
-watch). Multi-connection peripherals are common and the ESP32-S3 controller supports
-multiple simultaneous links (typically configurable up to
-`CONFIG_BT_NIMBLE_MAX_CONNECTIONS`), so this is much better-precedented than the
-dual-role question it replaces — but it is still unverified in this codebase
-specifically and stays a real risk to spike early (§6 step 3).
+**Two apps on one phone are not two BLE connections.** An earlier draft of this
+section treated "Gadgetbridge on one link, the Meshtastic app on another" as the
+replacement top risk. That is wrong for the common case: Android's Bluetooth stack
+keeps **one ACL/GATT connection per remote device** and multiplexes every app's
+`BluetoothGatt` client over it, refcounted, so two apps on the same handset talking
+to the same watch produce a single link. The watch sees one `onConnect` and one
+connection handle (`s_conn_handle`, `gb_ble.cpp:117`), with both apps' ATT traffic
+riding it. There is no radio-level contention to design around, and no second
+connection to hold.
+
+What *is* shared per link, and therefore is the actual coexistence surface:
+
+- **MTU** — negotiated once per link; the first requester wins and a later request
+  returns the already-negotiated value. `NimBLEDevice::setMTU(247)`
+  (`gb_ble.cpp:179`) is generous enough for both protocols, so this needs no change,
+  only awareness that the Meshtastic service cannot negotiate its own.
+- **Connection interval** — one link, one interval. A latency- or
+  throughput-sensitive request from either app changes the power profile for the
+  other. This is the one genuine conflict between the two protocols, and it is a
+  tuning question, not a blocker.
+- **Bonding/pairing state** — per device, hence shared. `GB_ENABLE_BONDING`
+  (`gb_ble.cpp:181`) already covers the link both apps use.
+- **Single-connection assumptions in the current code** — `s_conn_handle` holding one
+  value, and `s_assembler.reset()` on connect, are correct for one phone and wrong
+  the moment a second *device* connects (a tablet running the Meshtastic app against
+  a watch already bonded to a phone's Gadgetbridge). Multi-connection peripherals are
+  well-precedented on ESP32-S3 (up to `CONFIG_BT_NIMBLE_MAX_CONNECTIONS`), so this is
+  a bounded fix to make in `gb_ble.cpp`, not a design risk — but it is a real code
+  change, not free.
+
+The genuinely new constraint this section previously missed is discovery, not
+connection count: see §5.3 and §9 risk 8 for the advertising-payload problem.
 
 ## 5. Work items
 
@@ -387,11 +417,37 @@ uses to onboard and drive any node it connects to:
 add a second NimBLE service (UUID `6ba1b218-15a8-461f-9fa8-5dcae273eafd`) with its
 three characteristics (ToRadio/FromRadio/FromNum, §3) to the same NimBLE server
 Gadgetbridge's NUS/DIS/Battery services already run on. This is new *service*
-plumbing, not a new BLE *role* — see §4.2 for why that distinction matters. The one
-thing to verify early (§6 step 3, §9 risk 1) is that the controller/stack accepts a
-second independent central connection (the Meshtastic app) concurrently with
-Gadgetbridge's own connection, since both are now separate centrals talking to the
-same peripheral.
+plumbing, not a new BLE *role* — see §4.2 for why that distinction matters, and why
+hosting both services for one phone does not mean hosting two connections.
+
+**The hard part here is advertising, not the services themselves.** The Meshtastic
+app discovers nodes by scanning for service UUID `6ba1b218-…`, so the watch must
+advertise it — and there is no room. `startAdvertising()`
+(`gb_ble.cpp:148-166`) already documents the budget it is working against: flags (3
+bytes) plus an 18-character complete local name (20 bytes) consumes 23 of the
+advertisement's 31, and a 128-bit service UUID needs 18, which is why the NUS UUID
+was pushed into the scan response in the first place. A second 128-bit UUID needs
+another 18 bytes, and 18 + 18 = 36 does not fit in the 31-byte scan response either.
+Both UUIDs cannot be advertised the way this code advertises one. The options, none
+free:
+
+- **Shorten the advertised name** to buy the 18 bytes in the advertisement itself,
+  putting one UUID in each PDU. `GB_ADVERTISED_NAME_PREFIX " %02X%02X"`
+  (`gb_ble.cpp:141-146`) currently yields something like `T-Watch Ultra 4F2A`; the
+  name must keep matching protocol doc §3's regex for Gadgetbridge to recognise it,
+  and `T-Watch Ultra` alone (13 chars, 15 bytes) fits with the MAC suffix dropped —
+  at the cost of the suffix's stated purpose, telling two watches apart in a scan
+  list.
+- **Alternate the two UUIDs** across advertising intervals, so each scanner sees the
+  one it wants within a scan window. Costs discovery latency and is fiddly.
+- **BLE 5 extended advertising**, which the ESP32-S3 controller and NimBLE both
+  support. Android scanner support for extended advertising is version- and
+  chipset-dependent, so this cannot be assumed to reach every phone.
+
+Which of the three is right depends on whether the Meshtastic app will connect to an
+already-bonded, non-advertising device without a fresh scan hit — untested here.
+Verify this early (§6 step 2): it is cheap to test with the current firmware plus a
+generic BLE scanner app, long before any protobuf work exists.
 
 ### 5.4 `meshtastic_node/` module shape (mirrors `gadgetbridge_ble/`)
 
@@ -453,14 +509,19 @@ always-available on/off switch and this narrower, config-dependent gate relate.
 1. **§10 first** (persisted LoRa radio on/off setting) — small, independently
    useful on its own, and several later items (§5.6's gating, §5.4's radio bring-up)
    depend on the flag already existing.
-2. **§5.1** nanopb toolchain — prove a round-trip encode/decode of one trivial
+2. **§5.3** advertising/discovery spike — the cheapest high-information test in this
+   plan, and runnable against *today's* firmware with a generic BLE scanner app
+   before a line of Meshtastic code exists. Establish (a) whether a scanner still
+   finds and connects to the watch while Gadgetbridge holds it, (b) which of §5.3's
+   three advertising strategies actually gets both UUIDs discovered, and (c) that two
+   apps on one phone really do share one link as §4.2 states — the serial log shows
+   one `onConnect` or two. Do this before §5.1: if (c) is wrong, or if no advertising
+   strategy works, the coexistence design changes and everything downstream is built
+   on a false premise.
+3. **§5.1** nanopb toolchain — prove a round-trip encode/decode of one trivial
    message compiles and runs correctly in `emulator_watch_ultra` before anything
-   else. Highest-uncertainty item, blocks everything downstream.
-3. **§5.3** second-peripheral-service proof of concept — confirm the watch can hold
-   two independent concurrent BLE central connections (a Gadgetbridge test client
-   plus a second, Meshtastic-service-only test client) before building the rest. If
-   this fails or is unstable, it changes the whole design (§9 risk 1) and should be
-   discovered here, not after §5.4 is built out.
+   else. Highest-uncertainty *build* item, and it blocks everything downstream;
+   only the §5.3 spike above, which needs none of it, comes first.
 4. **§5.2** pull in the full proto subset + `.options` files, generate, confirm the
    generated structs match what Meshtastic's own client API examples show on the
    wire (cross-check against `meshtastic-python`'s BLE interface output, or a real
@@ -488,6 +549,41 @@ Gadgetbridge fork changes are needed for this feature.** The pre-revision plan's
 withdrawn in full — that design existed only because the earlier plan assumed the
 phone would manage the connection *through* Gadgetbridge; it doesn't.
 
+### 7.1 "Can Meshtastic reach the watch *through* Gadgetbridge instead?" — asked 2026-08-17
+
+Recorded here because it is the obvious question to ask of §4.2's coexistence story,
+and the answer constrains any future revisit. Two directions, only one of which
+exists:
+
+- **Tunnelling Meshtastic frames over the Gadgetbridge NUS link** (a new `t` value
+  carrying `ToRadio`/`FromRadio` bytes) is straightforward on the watch and a dead
+  end on the phone. The Meshtastic Android app's transports are its own BLE service,
+  TCP/IP, and USB serial; there is no hook to source its frames from another app. It
+  would have to be forked alongside Gadgetbridge, leaving two forks maintained
+  against an upstream protobuf schema — exactly what §2.1 rejects, doubled. Not
+  viable, and not merely out of scope.
+- **The reverse — Gadgetbridge as a client of the Meshtastic app** — does exist. The
+  Meshtastic Android app exposes an AIDL service and broadcast intents for
+  third-party apps (`com.geeksville.mesh.IMeshService`, `RECEIVED.*` /
+  `MESH_CONNECTED` broadcasts; the integration path ATAK-style plugins use). The
+  Gadgetbridge fork could subscribe to incoming mesh text and forward it to the watch
+  as ordinary notification/chat messages over the existing NUS link, sending replies
+  back out through the same service API. That needs **no** new watch-side BLE
+  service, no nanopb, no AES-CTR, no routing, no region tables — days of work against
+  this plan's weeks-to-months.
+
+**This does not replace the plan.** It is a different feature: it makes the watch a
+mesh *display and remote* for a mesh whose node lives elsewhere, which is precisely
+what §4.0 rules out on explicit direction. It is written down so that if the priority
+ever shifts from "the watch is the node" to "mesh messages on my wrist, cheaply,"
+the cheap option is already scoped and its cost is known. The two are not mutually
+exclusive either — a watch that *is* a node has no use for the AIDL bridge, but
+nothing about §4 forecloses it later.
+
+Verify the AIDL/intent surface against current upstream before relying on it; the
+same drift caveat as §9 risk 3 applies, and it has not been checked against a real
+install here.
+
 One small, genuinely optional idea if wanted later, kept explicitly separate from
 this plan: a cosmetic Gadgetbridge status mirror ("mesh node: on/off," surfaced
 through the `lora_enabled` field §10.3 already adds to the general settings-sync
@@ -506,7 +602,9 @@ if ever wanted.
 | LoRa enabled, region unset | Node completes the BLE config handshake and is configurable, but will not transmit (§5.6) until a region is set from the app |
 | Region set, single channel (Default, PSK `0x01`) | Node joins the mesh at LongFast defaults; a real Meshtastic node/app can see it, exchange `TEXT_MESSAGE_APP` packets |
 | Region set, custom channel with random PSK | Node correctly encrypts/decrypts against that channel; a mismatched PSK on the far end produces silently-dropped packets, not a watch-side error (expected per §3) |
-| Two concurrent peripheral connections: Gadgetbridge fork + Meshtastic app | Both stay functional at once, or the plan is revised — see §9 risk 1 |
+| Gadgetbridge fork + Meshtastic app, **same phone** | Both stay functional over the one shared link (§4.2); serial log shows a single `onConnect`. Neither app's MTU or connection-interval needs disturb the other enough to break it |
+| Gadgetbridge fork + Meshtastic app, **two different devices** | Two real connections; watch serves both, or the single-`s_conn_handle` assumption in `gb_ble.cpp` is fixed to track them separately (§4.2) |
+| Meshtastic app scans while Gadgetbridge is connected | Watch is discoverable on the Meshtastic service UUID under whichever §5.3 advertising strategy was chosen, and the Gadgetbridge name still matches protocol doc §3's regex |
 | Node goes out of range of other mesh members | No crash; node database entries age out or are marked stale rather than accumulating indefinitely |
 | Malformed/unexpected `ToRadio` frame from the phone app | Dropped without crashing the parser, mirroring Gadgetbridge protocol's "malformed JSON drops that line only" resilience posture |
 | Send a text message from the watch | Arrives at a real Meshtastic client (phone app, second node) as a normal `TEXT_MESSAGE_APP` packet — the actual interop proof |
@@ -518,13 +616,17 @@ if ever wanted.
 
 ## 9. Risks
 
-1. **Two concurrent BLE central connections to one peripheral is unverified in this
-   codebase.** Lower risk than the pre-revision plan's dual-role concern (§4.2), but
-   still unproven here specifically: the phone's Gadgetbridge fork and whatever runs
-   the Meshtastic app need independent, simultaneous connections to the same NimBLE
-   peripheral. Spike this first (§6 step 3) before committing to the rest of the
-   design; if the controller/stack can't sustain both, the fallback (advertise only
-   one service at a time, user picks a mode) needs its own design pass.
+1. **BLE coexistence — downgraded, and largely superseded by risk 8.** Two prior
+   drafts each named a coexistence concern as the top risk: dual central+peripheral
+   roles (withdrawn in §4.2 when the watch became the node), then two concurrent
+   central connections (corrected 2026-08-17 — two apps on one phone share a single
+   Android-multiplexed link, so there is no second connection in the case that
+   matters; see §4.2). What survives is smaller and bounded: a shared connection
+   interval both protocols must live with, and `gb_ble.cpp`'s single-`s_conn_handle`
+   assumption, which needs fixing only to support a Meshtastic client on a *separate
+   device*. Confirm the shared-link behaviour empirically in §6 step 2 rather than
+   trusting this paragraph — it is a statement about Android's stack, not something
+   verified against this watch.
 2. **Nanopb `.options` field-size choices are a real design decision, not
    boilerplate.** Undersized `repeated`/`bytes` bounds silently truncate; oversized
    ones waste the watch's limited RAM. Start from Meshtastic firmware's own
@@ -561,6 +663,17 @@ if ever wanted.
    asked for (§4.0), so §4.1's full list is the actual first milestone — plan
    schedule/expectations accordingly; §5.1-§5.4 is the section that has to land
    before anything is demoable against a real Meshtastic app.
+8. **Both service UUIDs do not fit in the advertising payload — now the top
+   coexistence risk**, replacing risk 1. Detailed in §5.3: the advertisement and scan
+   response between them cannot carry an 18-byte 128-bit UUID twice alongside a
+   Gadgetbridge-matching device name, and the Meshtastic app finds nodes by scanning
+   for its UUID. Every mitigation costs something (a shortened name loses the
+   two-watches-apart MAC suffix; alternating UUIDs costs discovery latency; BLE 5
+   extended advertising is not universally scannable on Android). Unlike the
+   connection-count concern it replaces, this one is certain — it follows from the
+   31-byte PDU limit and the byte budget `gb_ble.cpp:152-154` already documents — so
+   the spike (§6 step 2) is choosing a mitigation, not deciding whether a problem
+   exists.
 
 ## 10. New: persisted LoRa radio on/off setting
 
@@ -703,4 +816,4 @@ blunt watch-level override:
   does not model. Flagged as an open design question for whenever §5.4 is built —
   whether light sleep on this SoC/LilyGoLib version preserves LoRa SPI/IRQ handling
   well enough for a node to keep receiving through it is unverified and should be
-  spiked alongside §9 risk 1, not assumed either way.
+  spiked alongside the §6 step 2 BLE work, not assumed either way.

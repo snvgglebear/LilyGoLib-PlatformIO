@@ -23,7 +23,7 @@
 #include "app_gadgetbridge.h"
 #include "ui_clock_digital.h"
 #include "ui_clock_analog.h"
-#include "usable_area/usable_area.h"
+#include <usable_area.h>
 
 // Single source of truth is NVS (user_setting_params_t, hal_interface.h),
 // seeded at ui_clockface_build() and written back on every change.
@@ -116,9 +116,9 @@ void ui_clockface_build(lv_obj_t *parent)
 
     lv_obj_remove_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
 
-    int32_t screen_h = safe_area_screen_height();
+    int32_t screen_h = usable_area_screen_height();
 
-    s_clock_container = safe_area_place(parent, 0, screen_h);
+    s_clock_container = usable_area_place(parent, 0, screen_h);
     if (s_clock_container) {
         lv_obj_add_flag(s_clock_container, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(s_clock_container, clock_tap_cb, LV_EVENT_CLICKED, NULL);

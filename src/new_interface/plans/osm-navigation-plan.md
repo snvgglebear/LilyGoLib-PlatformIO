@@ -54,8 +54,8 @@ The watch-side infrastructure this builds on, all already in this repo:
   `app_gb_add_listener()` already lets independent UI modules react to `GbApp`
   state changes without knowing about each other; a future `ui_navigation.cpp`
   registers a listener exactly like any other module would.
-- **Safe-area layout.** `src/new_interface/usable_area/usable_area.h`'s
-  `safe_area_place(parent, y, height)` / `safe_area_rect(parent)` already solve
+- **Safe-area layout.** `lib/usable_area/src/usable_area.h`'s
+  `usable_area_place(parent, y, height)` / `usable_area_rect(parent)` already solve
   "lay out a banner or screen inside the curved bezel" — a nav banner or screen
   is just another caller.
 - **Haptics.** `gb_platform.h`'s `GbHaptic` (`GB_HAPTIC_TAP` — single click,
@@ -400,7 +400,7 @@ implementer doesn't have to re-derive the architecture.
   on `change == GB_CHANGE_NAVIGATION`; read state with `gb_app.navigationActive()`
   and `gb_app.navigation()` — never touch `GbApp` internals or the BLE layer
   directly, matching every other UI module's contract with `GbApp`.
-- **Layout.** A `safe_area_place(parent, y, height)` band (or `safe_area_rect()`
+- **Layout.** A `usable_area_place(parent, y, height)` band (or `usable_area_rect()`
   for the full-screen variant): maneuver icon on the left, `instr` as the
   primary (largest) label, `dist` beneath it, `eta`/`dest` as a smaller
   trailing line. Prefer `dist_m`-derived rendering only if present; otherwise

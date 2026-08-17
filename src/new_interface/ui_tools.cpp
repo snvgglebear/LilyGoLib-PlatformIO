@@ -26,7 +26,7 @@
  */
 #include "ui_define.h"
 #include "app_config.h"
-#include "usable_area/usable_area.h"
+#include <usable_area.h>
 
 // Modal dialog focus handling: while a message box is up, input is confined to
 // `msg_group` so the user cannot tab into the screen behind it. `prev_group`
@@ -459,7 +459,7 @@ lv_obj_t *create_radius_button(lv_obj_t *parent, const void *image, lv_event_cb_
  * Sized to the safe-area rectangle (usable_area.h) rather than the full parent
  * rect: at LV_PCT(100) the menu's header bar and top/bottom rows ran under the
  * T-Watch-Ultra's curved bezel, where the screen root clips them away. Resizing
- * the menu object itself (instead of wrapping it in a safe_area_rect() child)
+ * the menu object itself (instead of wrapping it in a usable_area_rect() child)
  * keeps every existing `lv_obj_del(menu)` call site correct with no orphaned
  * container left behind.
  */
@@ -470,7 +470,7 @@ lv_obj_t *create_menu(lv_obj_t *parent, lv_event_cb_t event_cb)
     lv_menu_set_mode_root_back_btn(menu, LV_MENU_ROOT_BACK_BTN_ENABLED);
 #endif
     lv_obj_add_event_cb(menu, event_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_set_size(menu, safe_area_screen_width() - 2 * SAFE_INSET, safe_area_screen_height() - 2 * SAFE_INSET);
+    lv_obj_set_size(menu, usable_area_screen_width() - 2 * SAFE_INSET, usable_area_screen_height() - 2 * SAFE_INSET);
     lv_obj_center(menu);
     return menu;
 }

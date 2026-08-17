@@ -6,7 +6,7 @@
 #include "quick_settings_tray.h"
 
 #include "quick_settings_tray_hal.h"
-#include "../usable_area/usable_area.h"
+#include <usable_area.h>
 
 namespace
 {
@@ -123,11 +123,11 @@ void brightnessSliderCb(lv_event_t *e)
 
 lv_obj_t *makeBand(lv_obj_t *tray, int32_t y, int32_t height)
 {
-    // safe_area_place() can return NULL for a band entirely inside the
+    // usable_area_place() can return NULL for a band entirely inside the
     // bezel -- not expected for anything inside a 230px tray dropped from
     // the top of a 502px-tall Ultra panel, but fall back to the tray itself
     // rather than crash if the geometry ever changes.
-    lv_obj_t *band = safe_area_place(tray, y, height);
+    lv_obj_t *band = usable_area_place(tray, y, height);
     return band ? band : tray;
 }
 
@@ -238,8 +238,8 @@ void quick_settings_tray_close(void)
 
 void quick_settings_tray_init(void)
 {
-    int32_t w = safe_area_screen_width();
-    int32_t h = safe_area_screen_height();
+    int32_t w = usable_area_screen_width();
+    int32_t h = usable_area_screen_height();
 
     lv_obj_t *top = lv_layer_top();
 

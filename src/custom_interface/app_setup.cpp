@@ -11,12 +11,13 @@
 
 #include <lvgl.h>
 
-#include "usable_area/usable_area.h"
+#include <usable_area.h>
 #include "screen_state/screen_state.h"
 #include "gadgetbridge_ble/gb_app.h"
 #include "gadgetbridge_ble/gb_link.h"
 #include "gadgetbridge_ble/gb_ui.h"
 #include "watch_faces/simple_face.h"
+#include "watch_faces/batman_dial.h"   // alternate analog face -- see setupGui()
 #include "quick_settings_tray/quick_settings_tray.h"
 
 #ifdef ARDUINO
@@ -87,7 +88,8 @@ void setupGui()
     quick_settings_tray_init();  // lv_layer_top(), so it overlays every screen below -- needs screen_w/h from usable_area_init()
 
     screen_home = lv_screen_active();
-    simple_face_init(screen_home);
+    //simple_face_init(screen_home);
+    batman_dial_init(screen_home);   // swap in for the analog face instead -- also comment out simple_face_init() above
     lv_obj_add_event_cb(screen_home, onHomeGesture, LV_EVENT_GESTURE, NULL);
     screen_state_set_wake_cb(onScreenWake);
 

@@ -81,13 +81,21 @@ NimBLE callbacks run on the host task: writes are reassembled into lines there a
 
 `env_arduino`'s `build_flags` in `platformio.ini` both select the physical LoRa module (`ARDUINO_LILYGO_LORA_SX1262`, `_CC1101`, `_SX1280`, `_LR1121`, `_SI4432` — exactly one uncommented) and exclude unused protocols from RadioLib (`RADIOLIB_EXCLUDE_*`) to keep firmware size down. Each board env additionally defines its own `ARDUINO_T_*` board-identity macro and adds its `variants/lilygo_*` include path.
 
+### `lib/usable_area` — shared curved-bezel layout engine
+
+The T-Watch-Ultra's cover glass hides everything outside a ~120 px corner radius, so widgets near a corner are drawn correctly and never seen. `lib/usable_area` is the shared engine for laying out inside that boundary, available to every app as `#include <usable_area.h>` (a PlatformIO local library under `lib/`, so it resolves from any `src_dir` at any nesting depth, and is only linked into apps that include it).
+
+`usable_area_init()` once after `beginLvglHelper()`, then parent widgets to a container from `usable_area_place(parent, y, height)` (a horizontal band, widened to exactly what's visible at that y-range) or `usable_area_rect(parent)` (the largest inscribed rectangle, for full-height/full-screen content) rather than straight to `lv_screen_active()`. `BEZEL_RADIUS` defaults to 120 on `ARDUINO_T_WATCH_S3_ULTRA` and 0 on the flat-panel boards, where every function degrades to a no-op — so callers don't need a board `#ifdef`. Override per-env with `-D BEZEL_RADIUS=<px>`.
+
+`src/testing_safe_area/safe_area.ino` is the demo/calibration harness for it. See `lib/usable_area/README.md` (the math, calibration) and `HOWTO.md` (placing your own widgets).
+
 ### Emulator peculiarities
 
 `env_emulator` in `platformio.ini` builds against the `native` platform with LVGL's SDL2 backend rather than the ESP32 Arduino framework; it skips `lv_conf.h` in favor of build-flag-defined LVGL config (`LV_CONF_SKIP`/`LV_CONF_INCLUDE_SIMPLE`), and `support/sdl2_paths.py`/`support/sdl2_build_extra.py` locate/link SDL2 on the host at build time. Each `emulator_*` env sets `SDL_HOR_RES`/`SDL_VER_RES` to match its real device's screen resolution.
 
 ## Third-party dependencies
 
-Most libraries (LilyGoLib, LVGL, RadioLib, XPowersLib, SensorLib, NimBLE-Arduino, ArduinoJson, etc.) are pulled via `lib_deps` in `platformio.ini` into `.pio/libdeps/<env>/` — not vendored in this repo. `lib/libhelix-mp3` is the one vendored exception (MP3 decode, used by the audio app).
+Most libraries (LilyGoLib, LVGL, RadioLib, XPowersLib, SensorLib, NimBLE-Arduino, ArduinoJson, etc.) are pulled via `lib_deps` in `platformio.ini` into `.pio/libdeps/<env>/` — not vendored in this repo. `lib/` holds the two exceptions: `lib/libhelix-mp3` (vendored third-party MP3 decode, used by the audio app) and `lib/usable_area` (first-party, see above).
 
 ## Reference material
 

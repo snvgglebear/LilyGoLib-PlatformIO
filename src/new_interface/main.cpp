@@ -45,7 +45,7 @@
 
 #include "hal_interface.h"
 #include "app_gadgetbridge.h"
-#include "usable_area/usable_area.h"
+#include <usable_area.h>
 #include "ui_boot_button.h"
 
 // Same application entry points the Arduino build calls.

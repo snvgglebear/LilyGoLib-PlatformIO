@@ -5,7 +5,7 @@
  *
  * Layout is flex and percentage based, with two per-device decisions: font size
  * picked from the panel width, and every screen and popup built inside
- * safe_area_rect() (see ../usable_area/usable_area.h) instead of directly
+ * usable_area_rect() (see usable_area.h) instead of directly
  * against lv_screen_active(), so nothing lands under the Ultra's curved glass.
  *
  * Four tabs plus modal overlays:
@@ -28,7 +28,7 @@
 #include "gb_ui_metrics.h"
 #include "lvgl.h"
 
-#include "../usable_area/usable_area.h"
+#include <usable_area.h>
 
 namespace
 {
@@ -148,8 +148,8 @@ lv_obj_t *makeButton(lv_obj_t *parent, const char *text, lv_event_cb_t handler, 
 lv_obj_t *makeSafeMsgbox()
 {
     lv_obj_t *box = lv_msgbox_create(NULL);
-    lv_obj_set_width(box, safe_area_screen_width() - 2 * SAFE_INSET);
-    lv_obj_set_style_max_height(box, safe_area_screen_height() - 2 * SAFE_INSET, 0);
+    lv_obj_set_width(box, usable_area_screen_width() - 2 * SAFE_INSET);
+    lv_obj_set_style_max_height(box, usable_area_screen_height() - 2 * SAFE_INSET, 0);
     return box;
 }
 
@@ -483,9 +483,9 @@ void openThread(size_t index)
     s_thread_index = index;
     gb_app.openConversation(index);
 
-    // safe_area_rect() sizes and centers this to the largest rect that never
+    // usable_area_rect() sizes and centers this to the largest rect that never
     // touches the curved bezel -- LV_PCT(100) of the panel would sit under it.
-    s_thread_view = safe_area_rect(lv_layer_top());
+    s_thread_view = usable_area_rect(lv_layer_top());
     lv_obj_set_style_bg_color(s_thread_view, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_thread_view, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_thread_view, 0, 0);
@@ -960,10 +960,10 @@ void gb_ui_begin(lv_obj_t *screen)
 
     // The caller already painted @p screen black and clipped it to the
     // bezel's rounded shape (usable_area_init()/usable_area_style_screen());
-    // safe_area_rect() gives the app content the largest rect that is
+    // usable_area_rect() gives the app content the largest rect that is
     // provably safe everywhere inside that shape, so tab bar buttons and
     // list rows near the top/bottom are never under the glass.
-    screen = safe_area_rect(screen);
+    screen = usable_area_rect(screen);
     lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
 
     buildStatusBar(screen);

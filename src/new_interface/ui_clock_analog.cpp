@@ -77,7 +77,7 @@ lv_obj_t *ui_clock_analog_create(lv_obj_t *parent)
     lv_obj_set_style_radius(page, 0, 0);
     lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, LV_PART_MAIN);
 
-    // The parent (a safe_area_place() band) is already given an explicit
+    // The parent (a usable_area_place() band) is already given an explicit
     // pixel size, so page's LV_PCT(100) resolves as soon as layout runs.
     lv_obj_update_layout(page);
     int32_t w = lv_obj_get_width(page);

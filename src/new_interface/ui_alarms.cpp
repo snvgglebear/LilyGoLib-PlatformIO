@@ -3,7 +3,7 @@
  * @license   MIT
  * @brief     Alarms / timer / stopwatch app.
  *
- * Layout: safe_area_rect(parent) holds a 3-button segmented control ("Alarms",
+ * Layout: usable_area_rect(parent) holds a 3-button segmented control ("Alarms",
  * "Timer", "Stopwatch") over a content container that is torn down and
  * rebuilt each time the selection changes -- so only the widgets for the tab
  * currently on screen exist at any moment, and refreshers that touch them
@@ -45,7 +45,7 @@
 #include "ui_alarms.h"
 #include "app_config.h"
 #include "app_gadgetbridge.h"
-#include "usable_area/usable_area.h"
+#include <usable_area.h>
 
 // ---------------------------------------------------------------------------
 // State
@@ -621,7 +621,7 @@ static void back_btn_clicked(lv_event_t *e)
 
 static void ui_alarms_setup(lv_obj_t *parent)
 {
-    s_root = safe_area_rect(parent);
+    s_root = usable_area_rect(parent);
     lv_obj_set_flex_flow(s_root, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(s_root, 4, 0);
     lv_obj_set_style_pad_row(s_root, 6, 0);

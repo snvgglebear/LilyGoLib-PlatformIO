@@ -1,19 +1,21 @@
 # How to place widgets through the safe-area engine
 
-`safe_area.h` gives you containers that are already guaranteed to sit inside
+`usable_area.h` gives you containers that are already guaranteed to sit inside
 the T-Watch-Ultra's curved bezel. This is the practical guide to using it for
 your own widgets — buttons, labels, lists, whatever. For the math behind it
 and how `BEZEL_RADIUS` was calibrated, see [`README.md`](README.md).
 
 ## The pattern
 
-1. Call `safe_area_init()` once in `setup()`, after `beginLvglHelper()` and
+0. `#include <usable_area.h>` — it's a PlatformIO library under `lib/`, so the
+   angle-bracket form works from any app at any nesting depth.
+1. Call `usable_area_init()` once in `setup()`, after `beginLvglHelper()` and
    before creating any widgets.
 2. For each widget, ask the engine for a container instead of parenting to
    `lv_screen_active()` directly:
 
    ```c
-   lv_obj_t *area = safe_area_place(parent, y, height);
+   lv_obj_t *area = usable_area_place(parent, y, height);
    ```
 
    `y` is the container's top edge in screen coordinates; `height` is how
@@ -21,7 +23,7 @@ and how `BEZEL_RADIUS` was calibrated, see [`README.md`](README.md).
    that y-range and returns a container already sized and positioned to fit
    it.
 3. **Check for `NULL`.** A band that falls entirely inside a corner (e.g.
-   `y = 0, height = 10`) has no visible width at all, and `safe_area_place()`
+   `y = 0, height = 10`) has no visible width at all, and `usable_area_place()`
    returns `NULL` rather than a zero-width container.
 4. Create your widget as a child of `area`, not of `lv_screen_active()`.
 
@@ -30,9 +32,9 @@ void setup()
 {
     // ...
     beginLvglHelper(instance);
-    safe_area_init();
+    usable_area_init();
 
-    lv_obj_t *area = safe_area_place(lv_screen_active(), 6, 40);
+    lv_obj_t *area = usable_area_place(lv_screen_active(), 6, 40);
     if (area) {
         lv_obj_t *btn = lv_button_create(area);
         lv_obj_set_size(btn, LV_PCT(100), LV_PCT(100));
@@ -49,7 +51,7 @@ what you're placing.
 
 ## Sizing the widget inside its container
 
-`safe_area_place()` only guarantees the *container* is safe — what you put in
+`usable_area_place()` only guarantees the *container* is safe — what you put in
 it is up to you:
 
 - **Fill it:** `lv_obj_set_size(widget, LV_PCT(100), LV_PCT(100))`, as in the
@@ -67,21 +69,21 @@ the container itself doesn't cross into the bezel.
 
 ## Stacking multiple widgets
 
-`safe_area_place()` doesn't do layout — you still track the vertical cursor
-yourself, the same way `safe_area.ino`'s band loop does:
+`usable_area_place()` doesn't do layout — you still track the vertical cursor
+yourself, the same way the demo sketch's band loop does:
 
 ```c
 int32_t y = 10;
 lv_obj_t *area;
 
-area = safe_area_place(lv_screen_active(), y, 40);
+area = usable_area_place(lv_screen_active(), y, 40);
 if (area) {
     lv_obj_t *btn = lv_button_create(area);
     lv_obj_set_size(btn, LV_PCT(100), LV_PCT(100));
 }
 y += 40 + 8;  // height + gap
 
-area = safe_area_place(lv_screen_active(), y, 60);
+area = usable_area_place(lv_screen_active(), y, 60);
 if (area) {
     lv_obj_t *label = lv_label_create(area);
     lv_label_set_text(label, "second row");
@@ -97,22 +99,22 @@ you pass in yourself.
 
 If a widget doesn't need to hug a particular vertical position — a dialog,
 a centered icon, anything that just needs to be "somewhere safe" — reach for
-`safe_area_rect()` instead of computing a `y`/`height`:
+`usable_area_rect()` instead of computing a `y`/`height`:
 
 ```c
-lv_obj_t *safe = safe_area_rect(lv_screen_active());
+lv_obj_t *safe = usable_area_rect(lv_screen_active());
 lv_obj_t *msg = lv_label_create(safe);
 lv_label_set_text(msg, "always inside the curve");
 lv_obj_center(msg);
 ```
 
-It trades away the extra width `safe_area_place()` reclaims near the vertical
+It trades away the extra width `usable_area_place()` reclaims near the vertical
 middle, but you don't have to think about `y` at all.
 
 ## Full-bleed: pad the content, not the container
 
 Every pattern above wraps your widget in a container that's shrunk to fit the
-curve, which is correct but costs you real screen area: a `safe_area_rect()`
+curve, which is correct but costs you real screen area: a `usable_area_rect()`
 button gives up the same 36 px margin on every side whether or not anything
 is actually there to be clipped. For a widget that wants to cover the *whole*
 panel — a tileview, a full-screen list, anything where the background,
@@ -120,8 +122,8 @@ scrollbar, or swipe/drag area should reach the true edge of the glass — that
 margin is wasted, because the corners get hidden by the screen's own rounding
 regardless of what draws into them.
 
-`safe_area_init()` already sets `radius = BEZEL_RADIUS` and `clip_corner` on
-the screen itself (see `safe_area.cpp`). So instead of asking the engine for
+`usable_area_init()` already sets `radius = BEZEL_RADIUS` and `clip_corner` on
+the screen itself (see `usable_area.cpp`). So instead of asking the engine for
 a smaller container, parent the widget straight to `lv_screen_active()` at
 full size and let that clipping do the work visually. Then pad only the
 *content* inside it — labels, buttons, list rows, anything readable or
@@ -139,7 +141,7 @@ lv_obj_set_style_pad_all(label, SAFE_INSET, 0);   /*content stays safe*/
 lv_obj_center(label);
 ```
 
-The content box you end up with is the same 338×430 `safe_area_rect()` gives
+The content box you end up with is the same 338×430 `usable_area_rect()` gives
 you — this doesn't reclaim any *usable* space — but the background, and
 anything scrollable, now runs edge to edge instead of stopping at a container
 boundary that was never actually visible as a boundary to begin with.
@@ -159,12 +161,12 @@ to lay out something the engine's simple rectangle can't express — call the
 inset functions directly:
 
 ```c
-int32_t inset = safe_area_inset_for_band(y, y + height - 1);
-int32_t width = safe_area_screen_width() - 2 * inset;
+int32_t inset = usable_area_inset_for_band(y, y + height - 1);
+int32_t width = usable_area_screen_width() - 2 * inset;
 ```
 
-This is what `safe_area_place()` does internally; `safe_area.ino`'s band demo
-also calls `safe_area_inset_for_band()` directly to decide whether a band
+This is what `usable_area_place()` does internally; the demo sketch
+also calls `usable_area_inset_for_band()` directly to decide whether a band
 counts as "reclaimed" space (narrower than the fixed safe rect would allow).
 ## Gotchas
 
@@ -173,16 +175,16 @@ counts as "reclaimed" space (narrower than the fixed safe rect would allow).
   from landing under the bezel. Full-bleed background/gesture surfaces are
   the one deliberate exception (see above), and even those must keep their
   actual content inset by `SAFE_INSET`.
-- **Call `safe_area_init()` before creating anything.** It sets
+- **Call `usable_area_init()` before creating anything.** It sets
   `screen_w`/`screen_h` that every other function depends on; calling
-  `safe_area_place()` first uses stale (zero) values.
-- **A `NULL` from `safe_area_place()` is normal**, not an error — it just
+  `usable_area_place()` first uses stale (zero) values.
+- **A `NULL` from `usable_area_place()` is normal**, not an error — it just
   means that row is entirely hidden by the bezel. Always check before using
   the result.
 - **Interactive widgets are still hit-tested as rectangles.** Clipping hides
   the *drawing* of anything that pokes past a container's edge, but LVGL's
   default hit test doesn't know about the curve. This mostly doesn't come up
-  when you use `safe_area_place()`/`safe_area_rect()` properly, since the
+  when you use `usable_area_place()`/`usable_area_rect()` properly, since the
   container itself won't cross into the bezel — but if you ever do let a
   widget extend past its safe-area container, see the "Clipping as a safety
   net" section in `README.md` for `LV_OBJ_FLAG_ADV_HITTEST`.

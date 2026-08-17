@@ -6,7 +6,7 @@
  * Adapted from src/factory/factory.ino: same WiFi/NTP/mutex bring-up and the
  * same hw_init()/setupGui() pair, plus two additions ported in from
  * src/custom_interface: usable_area_init() (safe-area engine for the
- * T-Watch-Ultra's curved bezel -- see usable_area/usable_area.h) and
+ * T-Watch-Ultra's curved bezel -- see usable_area.h) and
  * app_gb_init()/app_gb_poll() (the gadgetbridge_ble link, via the
  * app_gadgetbridge.h seam described there).
  *
@@ -31,7 +31,7 @@
 #include "event_define.h"
 #include "app_config.h"
 #include "app_gadgetbridge.h"
-#include "usable_area/usable_area.h"
+#include <usable_area.h>
 #include "ui_boot_button.h"
 
 // Defined in ui_main.cpp -- builds the launcher screen and all app screens.

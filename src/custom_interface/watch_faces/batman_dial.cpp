@@ -15,7 +15,7 @@
  * so the angle is offset by -90 degrees to put 12 o'clock at the top, and
  * the sine term is subtracted rather than added.
  *
- * Built inside safe_area_rect(screen) rather than against the screen's raw
+ * Built inside usable_area_rect(screen) rather than against the screen's raw
  * bounds, so the dial and digital readout stay clear of the curved bezel;
  * the dial radius is derived from that area's own size (not the full
  * screen), so it still scales to either watch.
@@ -27,7 +27,7 @@
 #include <LV_Helper.h>
 #include <math.h>
 
-#include "../usable_area/usable_area.h"
+#include <usable_area.h>
 
 static lv_obj_t *hand_hour;
 static lv_obj_t *hand_min;
@@ -85,7 +85,7 @@ static void build_face(lv_obj_t *screen)
     // usable_area_style_screen() already painted/clipped the screen itself;
     // build the dial inside the largest rect that's safe everywhere under
     // the curved bezel rather than against the screen's raw bounds.
-    lv_obj_t *area = safe_area_rect(screen);
+    lv_obj_t *area = usable_area_rect(screen);
 
     int32_t w = lv_obj_get_width(area);
     int32_t h = lv_obj_get_height(area);

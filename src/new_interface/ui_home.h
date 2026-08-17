@@ -8,7 +8,7 @@
 #include <lvgl.h>
 
 /// Build the home screen inside `parent` (ui_main.cpp's menu_panel). Safe-
-/// area-aware: every widget is placed through usable_area/usable_area.h
+/// area-aware: every widget is placed through usable_area.h
 /// rather than raw coordinates. Top to bottom:
 ///   - ui_battery_status_create();
 ///   - ui_pinned_links_build().

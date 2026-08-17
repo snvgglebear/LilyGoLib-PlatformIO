@@ -11,6 +11,6 @@
  *            face in custom_interface.
  */
 
-/// Builds the dial inside safe_area_rect(screen) and starts its 1 Hz refresh
+/// Builds the dial inside usable_area_rect(screen) and starts its 1 Hz refresh
 /// timer. Call once, after usable_area_init() has styled/clipped @p screen.
 void batman_dial_init(lv_obj_t *screen);

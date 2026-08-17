@@ -16,7 +16,7 @@
 
 #include "simple_face.h"
 
-#include "../usable_area/usable_area.h"
+#include <usable_area.h>
 
 #ifdef ARDUINO
 #include <LilyGoLib.h>
@@ -42,7 +42,7 @@ static void build_face(lv_obj_t *screen)
     // usable_area_style_screen() already painted/clipped the screen itself;
     // build the face inside the largest rect that's safe everywhere under
     // the curved bezel rather than against the screen's raw bounds.
-    lv_obj_t *scr = safe_area_rect(screen);
+    lv_obj_t *scr = usable_area_rect(screen);
 
     // Column layout with the clock centred and the battery row pinned bottom.
     lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);

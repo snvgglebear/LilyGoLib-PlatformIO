@@ -1,0 +1,9 @@
+{
+  "name": "usable_area",
+  "version": "1.0.0",
+  "description": "Curved-bezel safe-area layout engine for LVGL on LilyGo round displays. Returns containers guaranteed to sit inside the visible cover glass; degrades to a no-op on flat panels.",
+  "keywords": ["lvgl", "lilygo", "t-watch-ultra", "safe-area", "layout"],
+  "frameworks": "*",
+  "platforms": "*",
+  "headers": "usable_area.h"
+}

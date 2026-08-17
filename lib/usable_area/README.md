@@ -1,17 +1,40 @@
-# `src/testing_safe_area` — laying out around the curved bezel
+# `usable_area` — laying out around the curved bezel
 
 The T-Watch-Ultra panel reports **410 × 502**, but the cover glass is curved:
 everything outside a corner radius of roughly **120 px** is hidden behind the
 bezel. Widgets placed near a corner are drawn correctly and simply never seen.
 
-`safe_area.h`/`safe_area.cpp` is a small reusable engine for laying out inside
+`usable_area.h`/`usable_area.cpp` is a small reusable engine for laying out inside
 that boundary — a fixed safe rectangle, per-band insets that reclaim the space
 the fixed rectangle wastes, and a full-bleed pattern for widgets that should
-cover the whole panel. `safe_area.ino` is a harness sketch that exercises the
-first two. See [`HOWTO.md`](HOWTO.md) for how to place your own widgets
-through the engine.
+cover the whole panel. See [`HOWTO.md`](HOWTO.md) for how to place your own
+widgets through the engine.
 
-## Build
+## Using it
+
+This is a PlatformIO local library under `lib/`, so every env picks it up
+automatically for whatever `src_dir` is selected. From any app, at any nesting
+depth:
+
+```c
+#include <usable_area.h>
+```
+
+The library is only linked into apps that actually include it, so apps that
+don't use it pay nothing.
+
+`BEZEL_RADIUS` defaults per board: 120 on `ARDUINO_T_WATCH_S3_ULTRA`, and **0**
+everywhere else (T-Watch-S3, T-LoRa-Pager — flat panels with no bezel to lay
+out around). At radius 0 every function degrades to a no-op: the insets are 0,
+`usable_area_place()` returns a full-width band and `usable_area_rect()` the
+full screen. Callers therefore don't need to guard their use of this header
+behind a board `#ifdef`.
+
+## The demo sketch
+
+[`src/testing_safe_area/safe_area.ino`](../../src/testing_safe_area/safe_area.ino)
+is a harness that exercises the first two approaches below, and is what you
+flash to calibrate `BEZEL_RADIUS` against real glass:
 
 ```bash
 # in platformio.ini, swap the src_dir lines:
@@ -42,13 +65,21 @@ vertical position, so their ends trace the corner arcs.
 
 ## Calibrating `BEZEL_RADIUS`
 
-The whole sketch is driven by one constant:
+The whole engine is driven by one constant, defaulted per board in
+`usable_area.h`:
 
 ```c
 #define BEZEL_RADIUS 120
 ```
 
-Flash it and look at the top and bottom bands:
+Override it per-env without editing the header by adding to that env's
+`build_flags`:
+
+```ini
+-D BEZEL_RADIUS=118
+```
+
+Flash the demo sketch and look at the top and bottom bands:
 
 | What you see | Meaning | Action |
 |---|---|---|
@@ -71,18 +102,18 @@ At r = 120 that is **36 px**, giving a **338 × 430** safe area:
 #define SAFE_INSET ((int32_t)(BEZEL_RADIUS * 0.29289322f) + 1)
 ```
 
-`safe_area_rect(parent)` returns a container covering it. Parent your widgets
+`usable_area_rect(parent)` returns a container covering it. Parent your widgets
 to that and the corners stop being a concern. This is the one to reach for
 first — it is provably safe, not a guess, and costs one container.
 
 ### 2. Per-band insets
 
 A uniform 36 px inset wastes real estate in the vertical middle, where the full
-410 px genuinely *is* visible. `safe_area_inset_at()` returns the inset
+410 px genuinely *is* visible. `usable_area_inset_at()` returns the inset
 actually required at a given vertical offset:
 
 ```c
-int32_t safe_area_inset_at(int32_t y);
+int32_t usable_area_inset_at(int32_t y);
 ```
 
 | y | inset |
@@ -98,16 +129,16 @@ Between y = 120 and y = 382 it returns 0, so rows there use the full width —
 72 px more than the fixed rectangle offers. Useful for lists where each row
 sizes itself, or for anything meant to follow the curve.
 
-**Use `safe_area_inset_for_band()`, not `safe_area_inset_at()`, for anything
+**Use `usable_area_inset_for_band()`, not `usable_area_inset_at()`, for anything
 with height.** A widget's top and bottom edges sit at different depths in the
 arc, and the binding constraint is whichever is worse:
 
 ```c
-int32_t safe_area_inset_for_band(int32_t y_top, int32_t y_bot);
+int32_t usable_area_inset_for_band(int32_t y_top, int32_t y_bot);
 ```
 
 Passing only one edge lets the other corner poke into the bezel.
-`safe_area_place(parent, y, height)` wraps this — it builds the band's
+`usable_area_place(parent, y, height)` wraps this — it builds the band's
 container directly instead of just returning the inset. See
 [`HOWTO.md`](HOWTO.md) for placing real widgets with it.
 
@@ -115,7 +146,7 @@ container directly instead of just returning the inset. See
 
 Approaches 1 and 2 both size a *container* to fit the curve, which costs a
 fixed margin whether or not anything is actually there to be clipped — a
-full-height widget wrapped in `safe_area_rect()` gives up 36 px of background
+full-height widget wrapped in `usable_area_rect()` gives up 36 px of background
 on every side even though the corners get hidden by the screen's own rounding
 regardless of what's drawn under them (see "Clipping as a safety net" below).
 
@@ -137,7 +168,7 @@ padding has to move to the content instead of just disappearing. See
 
 ## Clipping as a safety net
 
-`safe_area_init()` applies this to the screen root, once, before any widgets
+`usable_area_init()` applies this to the screen root, once, before any widgets
 are created:
 
 ```c
@@ -168,21 +199,20 @@ The rounded viewport is a layout and clipping constraint, not a drawing one.
 
 ## One sketch per `src_dir`
 
-This lives in its own directory rather than beside `src/testing/testing.ino`
-because PlatformIO merges **every** `.ino` under `src_dir` — recursively — into
-a single translation unit (`InoToCPPConverter.merge()`). Two sketches in one
-tree collide on `setup()`/`loop()`. Rename the folder freely; just keep one
-sketch per `src_dir`. `safe_area.h`/`safe_area.cpp` are ordinary sources, not
-sketches, so they don't count against that limit — that's why the engine is
-split out from `safe_area.ino` rather than living inside it.
+The demo lives in its own `src/testing_safe_area/` directory rather than beside
+`src/testing/testing.ino` because PlatformIO merges **every** `.ino` under
+`src_dir` — recursively — into a single translation unit
+(`InoToCPPConverter.merge()`). Two sketches in one tree collide on
+`setup()`/`loop()`. Rename the folder freely; just keep one sketch per
+`src_dir`. The engine itself is outside `src_dir` entirely now that it's a
+library under `lib/`, so it never counts against that limit.
 
 ## Reference
 
 - [`HOWTO.md`](HOWTO.md) — placing your own widgets through the engine
 - [LVGL docs](https://lvgl.io/docs/open) — `lv_obj_set_style_clip_corner`,
   `LV_OBJ_FLAG_ADV_HITTEST`
-- [`src/testing/testing.ino`](../testing/testing.ino) — the canvas experiment
-  the 120 px radius was originally measured with, and
+- [`src/testing/testing.ino`](../../src/testing/testing.ino) — the canvas
+  experiment the 120 px radius was originally measured with, and
   `lv_example_tileview_full_bleed()` for a worked example of approach 3
-  against a real widget (a tileview, via `usable_area.h` — this repo's other
-  copy of the same engine, same function names, different init call)
+  against a real widget (a tileview)
