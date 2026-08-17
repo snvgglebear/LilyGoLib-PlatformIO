@@ -95,3 +95,4 @@ Most libraries (LilyGoLib, LVGL, RadioLib, XPowersLib, SensorLib, NimBLE-Arduino
 - [LVGL docs](https://lvgl.io/docs/open) and [lvgl/lvgl](https://github.com/lvgl/lvgl) — the UI toolkit used throughout `ui_*.cpp`.
 - [PlatoformIO docs](https://docs.platformio.org/en/latest/) — the build system and IDE used to build/upload/monitor this project.
 - [My fork of GadgetBridge] (https://codeberg.org/snvgglebear/Gadgetbridge) — the Android companion app for T-Watch-Ultra and T-Watch-S3. 
+- [LVGL Examples]("https://github.com/lvgl/lvgl/tree/master/examples")

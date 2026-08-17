@@ -5,9 +5,10 @@ everything outside a corner radius of roughly **120 px** is hidden behind the
 bezel. Widgets placed near a corner are drawn correctly and simply never seen.
 
 `safe_area.h`/`safe_area.cpp` is a small reusable engine for laying out inside
-that boundary — a fixed safe rectangle, and per-band insets that reclaim the
-space the fixed rectangle wastes. `safe_area.ino` is a harness sketch that
-exercises it. See [`HOWTO.md`](HOWTO.md) for how to place your own widgets
+that boundary — a fixed safe rectangle, per-band insets that reclaim the space
+the fixed rectangle wastes, and a full-bleed pattern for widgets that should
+cover the whole panel. `safe_area.ino` is a harness sketch that exercises the
+first two. See [`HOWTO.md`](HOWTO.md) for how to place your own widgets
 through the engine.
 
 ## Build
@@ -58,7 +59,7 @@ Flash it and look at the top and bottom bands:
 Adjust, reflash, repeat. Everything else — the safe rectangle, the per-band
 insets, the clipping — derives from this one number.
 
-## The two approaches
+## The three approaches
 
 ### 1. Fixed safe rectangle
 
@@ -110,6 +111,30 @@ Passing only one edge lets the other corner poke into the bezel.
 container directly instead of just returning the inset. See
 [`HOWTO.md`](HOWTO.md) for placing real widgets with it.
 
+### 3. Full-bleed with padded content
+
+Approaches 1 and 2 both size a *container* to fit the curve, which costs a
+fixed margin whether or not anything is actually there to be clipped — a
+full-height widget wrapped in `safe_area_rect()` gives up 36 px of background
+on every side even though the corners get hidden by the screen's own rounding
+regardless of what's drawn under them (see "Clipping as a safety net" below).
+
+For a widget that should cover the whole panel — a tileview, a full-screen
+list, anything where the background, scrollbar, or swipe/drag area should
+reach the true edge of the glass — parent it directly to `lv_screen_active()`
+at full size instead, and let that existing clipping do the visual work. Then
+pad only the *content* (labels, buttons, list rows — anything readable or
+tappable) by `SAFE_INSET`, so nothing lands under the bezel even though the
+background behind it does. The usable content box ends up identical to
+approach 1's 338 × 430; what changes is that the background and any
+scroll/drag surface now run edge to edge instead of stopping at a container
+boundary that was never visible as a boundary in the first place.
+
+This only replaces the *container*, not the "don't cross the bezel" rule for
+anything tappable — see the hit-testing note below, which is exactly why the
+padding has to move to the content instead of just disappearing. See
+[`HOWTO.md`](HOWTO.md) for a worked example.
+
 ## Clipping as a safety net
 
 `safe_area_init()` applies this to the screen root, once, before any widgets
@@ -157,4 +182,7 @@ split out from `safe_area.ino` rather than living inside it.
 - [LVGL docs](https://lvgl.io/docs/open) — `lv_obj_set_style_clip_corner`,
   `LV_OBJ_FLAG_ADV_HITTEST`
 - [`src/testing/testing.ino`](../testing/testing.ino) — the canvas experiment
-  the 120 px radius was originally measured with
+  the 120 px radius was originally measured with, and
+  `lv_example_tileview_full_bleed()` for a worked example of approach 3
+  against a real widget (a tileview, via `usable_area.h` — this repo's other
+  copy of the same engine, same function names, different init call)

@@ -770,6 +770,10 @@ void buildWatchTab(lv_obj_t *tab)
     lv_obj_t *button = makeButton(tab, LV_SYMBOL_CALL "  Ring my phone", findPhoneClicked, NULL);
     s_find_phone_label = lv_obj_get_child(button, 0);
 }
+void BuildTabsAsTiles(lv_obj_t *tabview)
+{
+   //Placeholder for future implementation of a tile-based tab view, if needed. 
+}
 
 void buildAlertsTab(lv_obj_t *tab)
 {

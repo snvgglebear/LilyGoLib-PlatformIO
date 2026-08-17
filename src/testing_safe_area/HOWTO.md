@@ -109,6 +109,48 @@ lv_obj_center(msg);
 It trades away the extra width `safe_area_place()` reclaims near the vertical
 middle, but you don't have to think about `y` at all.
 
+## Full-bleed: pad the content, not the container
+
+Every pattern above wraps your widget in a container that's shrunk to fit the
+curve, which is correct but costs you real screen area: a `safe_area_rect()`
+button gives up the same 36 px margin on every side whether or not anything
+is actually there to be clipped. For a widget that wants to cover the *whole*
+panel — a tileview, a full-screen list, anything where the background,
+scrollbar, or swipe/drag area should reach the true edge of the glass — that
+margin is wasted, because the corners get hidden by the screen's own rounding
+regardless of what draws into them.
+
+`safe_area_init()` already sets `radius = BEZEL_RADIUS` and `clip_corner` on
+the screen itself (see `safe_area.cpp`). So instead of asking the engine for
+a smaller container, parent the widget straight to `lv_screen_active()` at
+full size and let that clipping do the work visually. Then pad only the
+*content* inside it — labels, buttons, list rows, anything readable or
+tappable — by `SAFE_INSET`, so nothing lands under the bezel even though the
+background behind it does:
+
+```c
+lv_obj_t *panel = lv_obj_create(lv_screen_active());
+lv_obj_set_size(panel, LV_PCT(100), LV_PCT(100));
+lv_obj_set_style_pad_all(panel, 0, 0);   /*full-bleed background*/
+
+lv_obj_t *label = lv_label_create(panel);
+lv_label_set_text(label, "always inside the curve");
+lv_obj_set_style_pad_all(label, SAFE_INSET, 0);   /*content stays safe*/
+lv_obj_center(label);
+```
+
+The content box you end up with is the same 338×430 `safe_area_rect()` gives
+you — this doesn't reclaim any *usable* space — but the background, and
+anything scrollable, now runs edge to edge instead of stopping at a container
+boundary that was never actually visible as a boundary to begin with.
+
+**This only works for passive area.** Clipping hides drawing, not hit-testing
+(see the Gotchas section below). A tileview or a plain background is fine
+full-bleed because dragging/scrolling doesn't depend on landing inside a
+precise rectangle — but an individual button or other tappable widget must
+still live inside the `SAFE_INSET`-padded content, not out on the unpadded
+full-bleed parent, or its hit box will reach into the bezel's dead zone.
+
 ## Checking whether something fits before creating it
 
 If you want to know the visible width at a given row without creating a
@@ -124,12 +166,13 @@ int32_t width = safe_area_screen_width() - 2 * inset;
 This is what `safe_area_place()` does internally; `safe_area.ino`'s band demo
 also calls `safe_area_inset_for_band()` directly to decide whether a band
 counts as "reclaimed" space (narrower than the fixed safe rect would allow).
-
 ## Gotchas
 
-- **Don't parent widgets to `lv_screen_active()` directly.** That's exactly
-  the bug this engine exists to prevent — nothing stops the widget from
-  landing under the bezel.
+- **Don't parent *tappable* widgets to `lv_screen_active()` unpadded.** That's
+  exactly the bug this engine exists to prevent — nothing stops the widget
+  from landing under the bezel. Full-bleed background/gesture surfaces are
+  the one deliberate exception (see above), and even those must keep their
+  actual content inset by `SAFE_INSET`.
 - **Call `safe_area_init()` before creating anything.** It sets
   `screen_w`/`screen_h` that every other function depends on; calling
   `safe_area_place()` first uses stale (zero) values.
