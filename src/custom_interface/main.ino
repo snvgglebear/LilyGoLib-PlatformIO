@@ -5,6 +5,11 @@
 #include <lvgl.h>
 #include "watch_faces/simple_face.h"
 #include "watch_faces/batman_dial.h"   // alternate analog face -- see setup()
+#include "usable_area/usable_area.h"
+#include <new_interface/usable_area/usable_area.h>
+#include "screen_state/screen_state.h"
+#include "gadgetbridge_ble/gb_ui.h"
+#include "gadgetbridge_ble/gb_link.h"
 #if defined(ARDUINO_T_WATCH_S3_ULTRA)
 
 void setup() {

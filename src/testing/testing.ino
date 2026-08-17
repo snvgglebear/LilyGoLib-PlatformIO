@@ -1,5 +1,7 @@
 #include <LilyGoLib.h>
 #include <LV_Helper.h>
+#include <bosch/BoschSensorDataHelper.hpp>
+#include <usable_area/usable_area.h>
 
 
 #if defined(ARDUINO_T_WATCH_S3_ULTRA)
@@ -25,7 +27,19 @@ bool power_button_clicked = false;
 bool screen_asleep = false;
 uint32_t last_activity_ms = 0;
 lv_obj_t *label1;
-
+static SensorOrientation orientation(instance.sensor);
+uint32_t previousOrientation = 0;
+/// BHI260 device-orientation codes, per the BHY2 sensor API.
+static const char *orientation_name(uint32_t o)
+{
+    switch (o) {
+    case 0:  return "portrait upright";
+    case 1:  return "landscape left";
+    case 2:  return "portrait upside down";
+    case 3:  return "landscape right";
+    default: return "unknown";
+    }
+}
 void lv_example_canvas_rectangle(void)
 {
     /*Create a buffer for the canvas. At full screen size this is 410*502*4 = 823 kB,
@@ -69,6 +83,114 @@ void lv_example_canvas_rectangle(void)
 
     lv_canvas_finish_layer(canvas, &layer);
 }
+void lv_example_tileview_l_shape(void)
+{
+    /*The tileview is full-height, so its widest safe width is the one the top
+      and bottom rows allow - which is what safe_area_rect() returns. Asking
+      safe_area_place() for the whole height instead gives a 170 px sliver,
+      because at y=0 the rounded viewport is only 170 px across.*/
+    lv_obj_t *screen = safe_area_rect(lv_screen_active());
+    lv_obj_t * tv = lv_tileview_create(screen);
+
+    /*Tile1: just a label*/
+lv_obj_t * tile1 = lv_tileview_add_tile(tv, 0, 0, (lv_dir_t)(LV_DIR_BOTTOM | LV_DIR_RIGHT));
+    lv_obj_t * label = lv_label_create(tile1);
+    lv_label_set_text(label, "Scroll down");
+    lv_obj_center(label);
+
+    /*Tile2: a button*/
+    lv_obj_t * tile2 = lv_tileview_add_tile(tv, 0, 1, (lv_dir_t)(LV_DIR_TOP | LV_DIR_RIGHT));
+
+    lv_obj_t * btn = lv_button_create(tile2);
+
+    label = lv_label_create(btn);
+    lv_label_set_text(label, "Scroll up or right");
+
+    lv_obj_set_size(btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_center(btn);
+
+    /*Tile3: a list*/
+    lv_obj_t * tile3 = lv_tileview_add_tile(tv, 1, 1, LV_DIR_LEFT);
+    lv_obj_t * list = lv_list_create(tile3);
+    lv_obj_set_size(list, LV_PCT(100), LV_PCT(100));
+
+    lv_list_add_button(list, NULL, "One");
+    lv_list_add_button(list, NULL, "Two");
+    lv_list_add_button(list, NULL, "Three");
+    lv_list_add_button(list, NULL, "Four");
+    lv_list_add_button(list, NULL, "Five");
+    lv_list_add_button(list, NULL, "Six");
+    lv_list_add_button(list, NULL, "Seven");
+    lv_list_add_button(list, NULL, "Eight");
+    lv_list_add_button(list, NULL, "Nine");
+    lv_list_add_button(list, NULL, "Ten");
+
+}
+
+/*Same L-shaped tileview, but full-bleed: the tileview covers the whole panel
+  so backgrounds, scrollbars and swipe gestures reach the edge of the glass,
+  and only the tile *contents* are inset by SAFE_INSET to stay clear of the
+  corner arcs. Whatever background does fall in a corner is hidden by the
+  screen's clip_corner, set in usable_area_init().
+
+  Costs nothing in usable content area versus safe_area_rect() - the content
+  box is the same 338x430 - but avoids the 36 px black border around it.*/
+void lv_example_tileview_full_bleed(void)
+{
+    lv_obj_t * tv = lv_tileview_create(lv_screen_active());
+
+    /*Tiles are sized and positioned as a percentage of the tileview's content
+      area, so the tileview itself must not carry the theme's default padding
+      or the tiles stop matching the panel.*/
+    lv_obj_set_style_pad_all(tv, 0, 0);
+
+    /*Tile1: just a label*/
+    lv_obj_t * tile1 = lv_tileview_add_tile(tv, 0, 0, (lv_dir_t)(LV_DIR_BOTTOM | LV_DIR_RIGHT));
+    lv_obj_set_style_pad_all(tile1, SAFE_INSET, 0);
+    lv_obj_t * label = lv_label_create(tile1);
+    lv_label_set_text(label, "Scroll down");
+    lv_obj_center(label);
+
+    /*Tile2: a button*/
+    lv_obj_t * tile2 = lv_tileview_add_tile(tv, 0, 1, (lv_dir_t)(LV_DIR_TOP | LV_DIR_RIGHT));
+    lv_obj_set_style_pad_all(tile2, SAFE_INSET, 0);
+
+    lv_obj_t * btn = lv_button_create(tile2);
+
+    label = lv_label_create(btn);
+    lv_label_set_text(label, "Scroll up or right");
+
+    lv_obj_set_size(btn, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_center(btn);
+
+    /*Tile3: a list. This tile keeps zero padding so the list's background runs
+      edge to edge; the inset goes on the list instead, so its buttons stay off
+      the arcs. LVGL clamps scrolling to the padded content area, so the first
+      and last rows cannot ride up into a corner either.*/
+    lv_obj_t * tile3 = lv_tileview_add_tile(tv, 1, 1, (lv_dir_t)(LV_DIR_LEFT | LV_DIR_TOP));
+    lv_obj_set_style_pad_all(tile3, SAFE_INSET, 0);
+    lv_obj_t * list = lv_list_create(tile3);
+    lv_obj_set_size(list, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_pad_all(list, SAFE_INSET, 0);
+    lv_obj_set_style_radius(list, 120, 0);
+
+    lv_list_add_button(list, NULL, "One");
+    lv_list_add_button(list, NULL, "Two");
+    lv_list_add_button(list, NULL, "Three");
+    lv_list_add_button(list, NULL, "Four");
+    lv_list_add_button(list, NULL, "Five");
+    lv_list_add_button(list, NULL, "Six");
+    lv_list_add_button(list, NULL, "Seven");
+    lv_list_add_button(list, NULL, "Eight");
+    lv_list_add_button(list, NULL, "Nine");
+    lv_list_add_button(list, NULL, "Ten");
+    // Tile 4: a Label. 
+    lv_obj_t *tile4 = lv_tileview_add_tile(tv, 1, 0, (lv_dir_t)(LV_DIR_LEFT | LV_DIR_BOTTOM));
+
+    lv_obj_set_style_pad_all(tile4, SAFE_INSET, 0);
+    lv_obj_t *label4 = lv_label_create(tile4);
+    lv_label_set_text(label4, "Scroll Left or Down");
+}
 
 void setup()
 {
@@ -77,25 +199,30 @@ void setup()
     instance.begin();
 
     beginLvglHelper(instance);
-
+    usable_area_init();
     instance.setBrightness(DEVICE_MAX_BRIGHTNESS_LEVEL);
 
-    lv_example_canvas_rectangle();
-
-    label1 = lv_label_create(lv_screen_active());
-    lv_label_set_long_mode(label1, LV_LABEL_LONG_SCROLL);
-    lv_obj_set_width(label1, LV_PCT(90));
-    lv_label_set_text(label1, "Awake");
-    lv_obj_align(label1, LV_ALIGN_TOP_MID, 0, 10);
+    //lv_example_canvas_rectangle();
+    /*Pick one - both build a tileview on the active screen, so running both
+      stacks them on top of each other.*/
+    //lv_example_tileview_l_shape();
+    lv_example_tileview_full_bleed();
+    // label1 = lv_label_create(lv_screen_active());
+    // lv_label_set_long_mode(label1, LV_LABEL_LONG_SCROLL);
+    // lv_obj_set_width(label1, LV_PCT(90));
+    // lv_label_set_text(label1, "Awake");
+    // lv_obj_align(label1, LV_ALIGN_TOP_MID, 0, 10);
 
     lv_task_handler();
-
+    previousOrientation = 0;
     instance.onEvent([](DeviceEvent_t event, void *params, void * user_data) {
         if (instance.getPMUEventType(params) == PMU_EVENT_KEY_CLICKED) {
             power_button_clicked = true;
         }
     }, POWER_EVENT, NULL);
-
+    float sample_rate = 5.0;
+    uint32_t report_latency_ms = 0;
+    orientation.enable(sample_rate, report_latency_ms);
     last_activity_ms = millis();
 }
 
@@ -111,20 +238,42 @@ void loop()
         if (screen_asleep) {
             instance.wakeupDisplay();
             screen_asleep = false;
-            lv_label_set_text(label1, touched ? "Awake (woken by touch)" : "Awake (woken by power button)");
+            // lv_label_set_text(label1, touched ? "Awake (woken by touch)" : "Awake (woken by power button)");
         }
 
         last_activity_ms = millis();
     }
 
     if (!screen_asleep && (millis() - last_activity_ms >= SCREEN_SLEEP_TIMEOUT_MS)) {
-        lv_label_set_text(label1, "Sleeping (timeout) - touch screen or click power button to wake");
+        // lv_label_set_text(label1, "Sleeping (timeout) - touch screen or click power button to wake");
         lv_task_handler();
 
         instance.sleepDisplay();
         screen_asleep = true;
-    }
+    }    
+    static uint32_t last = 0;
 
+    if (millis() - last > 500) {
+        last = millis();
+        uint32_t o = orientation.getOrientation();
+        Serial.printf("orientation: %lu (%s)\n", (unsigned long)o, orientation_name(o));
+
+        if (previousOrientation != o) {
+        Serial.printf("previous orientation: %lu (%s)\n", (unsigned long)o, orientation_name(previousOrientation));
+            if (previousOrientation == 0 && o ==2) {
+                if (screen_asleep) {
+                    instance.wakeupDisplay();
+                    screen_asleep = false;
+                    // lv_label_set_text(label1, "Awake (woken by orientation change)");
+                } else {
+                    // lv_label_set_text(label1, "Orientation changed to landscape left");
+                }
+            }
+            
+        }
+
+        previousOrientation = o;
+    }
     lv_task_handler();
     delay(5);
 }
