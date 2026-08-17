@@ -47,7 +47,10 @@ static lv_point_precise_t pts_hour[2];
 static lv_point_precise_t pts_min[2];
 static lv_point_precise_t pts_sec[2];
 
-static int32_t centre_x, centre_y, radius, arc_spacing;
+/// Dial radius -- the tick ring, not the outer bound of the face. The hands
+/// and numerals are all sized off it, and the battery arc sits outside it in
+/// the ARC_SPACING px reserved beyond it.
+static int32_t centre_x, centre_y, radius;
 
 static lv_obj_t *make_hand(lv_obj_t *parent, lv_color_t colour, int32_t width)
 {
@@ -101,9 +104,9 @@ static void refresh(lv_timer_t *t)
     float min_deg  = minute * 6.0f;
     float sec_deg  = second * 6.0f;
 
-    set_hand(hand_hour, pts_hour, hour_deg, radius / 2);
-    set_hand(hand_min,  pts_min,  min_deg,  (radius * 3) / 4);
-    set_hand(hand_sec,  pts_sec,  sec_deg,  (radius * 9) / 10);
+    set_hand(hand_hour, pts_hour, hour_deg, (radius * HOUR_HAND_PCT) / 100);
+    set_hand(hand_min,  pts_min,  min_deg,  (radius * MIN_HAND_PCT) / 100);
+    set_hand(hand_sec,  pts_sec,  sec_deg,  (radius * SEC_HAND_PCT) / 100);
 
     // One write, two widgets: the arc and its readout are both observers.
     lv_subject_set_int(&batt_subject, percent);
@@ -133,7 +136,7 @@ static lv_obj_t *make_arc(lv_obj_t *parent, lv_color_t colour, int32_t width,
     lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_set_style_arc_width(arc, width, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(arc, lv_color_hex(0x303030), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, ARC_TRACK_COLOR, LV_PART_MAIN);
     lv_obj_set_style_arc_width(arc, width, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(arc, colour, LV_PART_INDICATOR);
     lv_obj_set_style_arc_rounded(arc, true, LV_PART_INDICATOR);
@@ -162,8 +165,13 @@ static void build_face(lv_obj_t *screen)
     }
     centre_x = w / 2;
     centre_y = h / 2;
-    radius   = (w < h ? w : h) / 2 - 10;
-   
+
+    // outer_r is the furthest anything may be drawn; the dial itself stops
+    // ARC_SPACING short of it, leaving that ring for the battery arc and its
+    // readout. Everything else on the face is derived from `radius`, so
+    // widening ARC_SPACING shrinks the dial and its contents together.
+    int32_t outer_r = (w < h ? w : h) / 2 - FACE_MARGIN;
+    radius = outer_r - ARC_SPACING;
     if (radius < 10) {
         radius = 10;
     }
@@ -176,57 +184,73 @@ static void build_face(lv_obj_t *screen)
     // natively. Nothing catches the mismatch: every widget setter takes
     // lv_obj_t*, and LV_USE_ASSERT_OBJ is 0 in both lv_conf paths.
     lv_obj_t *dial = lv_scale_create(area);
-    lv_obj_set_size(dial, (radius * 2)-arc_spacing, (radius * 2)-arc_spacing);
+    lv_obj_set_size(dial, radius * 2, radius * 2);
     lv_obj_center(dial);
     lv_obj_remove_flag(dial, LV_OBJ_FLAG_SCROLLABLE);
 
-    // 60 minute ticks around a full circle. Tick n sits at
-    // n * angle_range / (total_tick_count - 1) degrees, so 61 ticks over 360
-    // gives exactly 6 deg spacing -- with 60 the spacing becomes 360/59 and
-    // the ring visibly fails to close. Ticks 0 and 60 land on the same spot
-    // at 12 o'clock and are both major, so the overlap is invisible.
-    // rotation 270 puts tick 0 at the top (LVGL measures 0 deg from 3
-    // o'clock). The range only feeds the labels, which are off here.
+    // Minute ticks around a full circle. Tick n sits at
+    // n * angle_range / (TICK_COUNT - 1) degrees, so TICK_COUNT 61 over 360
+    // gives exactly 6 deg spacing -- see the header. Ticks 0 and 60 land on
+    // the same spot at 12 o'clock and are both major, so the overlap is
+    // invisible. rotation 270 puts tick 0 at the top (LVGL measures 0 deg
+    // from 3 o'clock). The range only feeds the labels, which are off here.
     lv_scale_set_mode(dial, LV_SCALE_MODE_ROUND_INNER);
-    lv_scale_set_total_tick_count(dial, 61);
-    lv_scale_set_major_tick_every(dial, 5);
+    lv_scale_set_total_tick_count(dial, TICK_COUNT);
+    lv_scale_set_major_tick_every(dial, MAJOR_TICK_EVERY);
     lv_scale_set_angle_range(dial, 360);
     lv_scale_set_rotation(dial, 270);
-    lv_scale_set_range(dial, 0, 60);
-    // Hour numerals on the major ticks. lv_scale_set_text_src() keeps the
-    // pointer and walks the array until a NULL to count the labels, so it has
-    // to be static and NULL-terminated -- a braced literal or a local array
-    // would leave the scale reading dead memory on every redraw.
-    //
-    // Twelve entries for thirteen major ticks: the last one is tick 60, which
-    // sits exactly on tick 0, so leaving it unlabelled avoids drawing "12"
-    // twice over itself (which would blend the antialiased edges and make it
-    // look heavier than the other numerals).
-    static const char *hour_labels[] = {
-        "12", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", NULL
-    };
-    lv_scale_set_text_src(dial, hour_labels);
-    lv_scale_set_label_show(dial, true);
+    lv_scale_set_range(dial, 0, TICK_COUNT - 1);
+    // Ticks only -- the hour numerals are placed by hand further down. The
+    // scale puts its own labels at
+    //     (radius_edge - major_len) - (LV_SCALE_DEFAULT_LABEL_GAP + letter_space)
+    // and LV_SCALE_DEFAULT_LABEL_GAP is a #define inside lv_scale.c rather than
+    // a style property, so the tick-to-label distance is not adjustable that
+    // way. Owning the numerals is what makes NUMERAL_GAP a real knob.
+    lv_scale_set_label_show(dial, false);
 
     lv_obj_set_style_radius(dial, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(dial, lv_color_hex(0x101010), 0);
+    lv_obj_set_style_bg_color(dial, DIAL_BG_COLOR, 0);
     lv_obj_set_style_bg_opa(dial, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(dial, lv_palette_main(LV_PALETTE_YELLOW), 0);
-    lv_obj_set_style_border_width(dial, 3, 0);
+    lv_obj_set_style_border_color(dial, DIAL_BORDER_COLOR, 0);
+    lv_obj_set_style_border_width(dial, DIAL_BORDER_WIDTH, 0);
 
-    // LV_PART_ITEMS is the minor ticks, LV_PART_INDICATOR the major ones --
-    // and the numerals too, which take their text style from the same part.
-    lv_obj_set_style_length(dial, 10, LV_PART_ITEMS);
-    lv_obj_set_style_line_width(dial, 2, LV_PART_ITEMS);
-    lv_obj_set_style_line_color(dial, lv_palette_main(LV_PALETTE_GREY), LV_PART_ITEMS);
-    lv_obj_set_style_length(dial, 15, LV_PART_INDICATOR);
-    lv_obj_set_style_line_width(dial, 3, LV_PART_INDICATOR);
-    lv_obj_set_style_line_color(dial, lv_palette_main(LV_PALETTE_YELLOW), LV_PART_INDICATOR);
-    lv_obj_set_style_text_color(dial, lv_color_white(), LV_PART_INDICATOR);
-    // There is no lv_scale_set_style() in 9.2.2 -- the scale's only setters are
-    // the twelve lv_scale_set_* in lv_scale.h. A local style on the part the
-    // labels draw from does the same job.
-    lv_obj_set_style_text_font(dial, &lv_font_montserrat_28, LV_PART_INDICATOR);
+    // LV_PART_ITEMS is the minor ticks, LV_PART_INDICATOR the major ones. No
+    // text style on either part any more -- with label_show off, nothing on
+    // the scale draws text.
+    lv_obj_set_style_length(dial, small_tick_length, LV_PART_ITEMS);
+    lv_obj_set_style_line_width(dial, SMALL_TICK_WIDTH, LV_PART_ITEMS);
+    lv_obj_set_style_line_color(dial, SMALL_TICK_COLOR, LV_PART_ITEMS);
+    lv_obj_set_style_length(dial, large_tick_length, LV_PART_INDICATOR);
+    lv_obj_set_style_line_width(dial, LARGE_TICK_WIDTH, LV_PART_INDICATOR);
+    lv_obj_set_style_line_color(dial, LARGE_TICK_COLOR, LV_PART_INDICATOR);
+
+    // Hour numerals, one label each, parented to `area` so they draw over the
+    // dial's opaque background. Ticks run inward from the dial edge, so the
+    // major tick's inner end is at radius - large_tick_length; NUMERAL_GAP is
+    // the clearance from there to the numeral's outer edge, and half the line
+    // height converts that to the centre LV_ALIGN_CENTER positions by.
+    //
+    // Unlike lv_scale_set_text_src(), lv_label_set_text() copies the string,
+    // so this array carries no lifetime requirement.
+    const lv_font_t *numeral_font = NUMERAL_FONT;
+    int32_t numeral_r = radius - large_tick_length - NUMERAL_GAP
+                        - lv_font_get_line_height(numeral_font) / 2;
+
+    static const char *hour_labels[] = {
+        "12", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"
+    };
+    for (int i = 0; i < 12; i++) {
+        // 30 deg per hour, less 90 so that hour 12 (i = 0) lands at the top.
+        float rad = (i * 30.0f - 90.0f) * (float)M_PI / 180.0f;
+
+        lv_obj_t *numeral = lv_label_create(area);
+        lv_label_set_text(numeral, hour_labels[i]);
+        lv_obj_set_style_text_font(numeral, numeral_font, 0);
+        lv_obj_set_style_text_color(numeral, NUMERAL_COLOR, 0);
+        lv_obj_align(numeral, LV_ALIGN_CENTER,
+                     (int32_t)(cosf(rad) * numeral_r),
+                     (int32_t)(sinf(rad) * numeral_r));
+    }
 
     // Battery arc in the top-right quadrant, sitting just outside the dial,
     // with a straight readout inside it. Both bind to batt_subject rather than
@@ -234,19 +258,19 @@ static void build_face(lv_obj_t *screen)
     // widgets follow -- the pattern from lv_example_arc_bind_value.
     
 
-    // Computed, not measured: the lv_obj_set_size() above only marks the
-    // layout dirty, so lv_obj_get_width(dial) would still read back 0 here.
-    int32_t dial_r = ((radius * 2) - arc_spacing) / 2;
-    int32_t arc_r  = dial_r + ARC_GAP + ARC_WIDTH;
+    // `radius` is the dial radius, so the arc's outer edge lands ARC_GAP +
+    // ARC_WIDTH beyond it -- within the ARC_SPACING reserved above as long as
+    // ARC_SPACING >= ARC_GAP + ARC_WIDTH.
+    int32_t arc_r = radius + ARC_GAP + ARC_WIDTH;
 
     lv_subject_init_int(&batt_subject, 0);
 
-    lv_obj_t *batt_arc = make_arc(area, lv_palette_main(LV_PALETTE_YELLOW),
-                                  ARC_WIDTH, arc_r, 270, 360);
+    lv_obj_t *batt_arc = make_arc(area, ARC_COLOR, ARC_WIDTH, arc_r,
+                                  ARC_START_DEG, ARC_END_DEG);
     // 9.2.2 has no lv_subject_set_min/max_value_int -- the observer callback
     // just calls lv_arc_set_value(), which clamps to the widget's own range,
     // so the limits live here.
-    lv_arc_set_range(batt_arc, 0, 100);
+    lv_arc_set_range(batt_arc, ARC_MIN, ARC_MAX);
     lv_arc_bind_value(batt_arc, &batt_subject);
 
     // Readout at the quadrant's midpoint, upright. The dial, the arc and this
@@ -259,13 +283,15 @@ static void build_face(lv_obj_t *screen)
     // meaning anything past arc_r clears it. Half the line height puts the
     // label's inner edge -- not its centre -- ARC_GAP px off the arc, and
     // derives from the font so changing it does not need a new magic number.
-    const lv_font_t *readout_font = &lv_font_montserrat_20;
-    const float mid_rad = 315.0f * (float)M_PI / 180.0f;
+    const lv_font_t *readout_font = READOUT_FONT;
+    // Midpoint of the arc, so moving ARC_START_DEG/ARC_END_DEG carries the
+    // readout along instead of leaving it behind at a hardcoded angle.
+    const float mid_rad = ((ARC_START_DEG + ARC_END_DEG) / 2.0f) * (float)M_PI / 180.0f;
     int32_t label_r = arc_r + ARC_GAP + lv_font_get_line_height(readout_font) / 2;
 
     lv_obj_t *readout = lv_label_create(area);
     lv_obj_set_style_text_font(readout, readout_font, 0);
-    lv_obj_set_style_text_color(readout, lv_color_white(), 0);
+    lv_obj_set_style_text_color(readout, READOUT_COLOR, 0);
     lv_label_bind_text(readout, &batt_subject, "%d%%");
     lv_obj_align(readout, LV_ALIGN_CENTER,
                  (int32_t)(cosf(mid_rad) * label_r),
@@ -284,8 +310,6 @@ void batman_dial_init(lv_obj_t *screen)
 {
     build_face(screen);
 
-    // One timer at 1 Hz is enough -- the second hand only needs to jump once
-    // a second, not redraw continuously.
-    lv_timer_t *timer = lv_timer_create(refresh, 1000, NULL);
-    lv_timer_ready(timer);      // paint immediately rather than after 1s
+    lv_timer_t *timer = lv_timer_create(refresh, REFRESH_INTERVAL_MS, NULL);
+    lv_timer_ready(timer);      // paint immediately rather than after one tick
 }

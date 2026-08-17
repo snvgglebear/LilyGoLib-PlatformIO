@@ -195,7 +195,7 @@ void CreateButtonGrid(void) {
     lv_obj_set_style_pad_row(buttonmatrix, SAFE_INSET, 0);
     lv_obj_set_style_pad_column(buttonmatrix, SAFE_INSET, 0);
     lv_obj_set_align(buttonmatrix, LV_ALIGN_CENTER);
-    lv_obj_set_size(buttonmatrix, lv_pct(90), 80);
+    lv_obj_set_size(buttonmatrix, lv_pct(90), 150);
     static const char * buttonmatrix_map_0[] = {"Normal", "Checked", "Disabled", "Hidden", NULL};
     lv_buttonmatrix_set_map(buttonmatrix, buttonmatrix_map_0);
     static const lv_buttonmatrix_ctrl_t buttonmatrix_ctrl_map_1[] = {LV_BUTTONMATRIX_CTRL_NONE, (lv_buttonmatrix_ctrl_t)(LV_BUTTONMATRIX_CTRL_CHECKABLE | LV_BUTTONMATRIX_CTRL_CHECKED), LV_BUTTONMATRIX_CTRL_DISABLED, LV_BUTTONMATRIX_CTRL_HIDDEN};
