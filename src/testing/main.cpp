@@ -1,14 +1,17 @@
 /**
  * @file      main.cpp
- * @brief     Native/SDL2 entry point for custom_interface. Mirrors
- *            src/watch_interface/main.cpp's skeleton; setupGui()/loopGui()
- *            are shared with custom_interface.ino (see app_setup.h) so hardware and the
- *            emulator run identical UI code, same as src/factory does.
+ * @license   MIT
+ * @brief     Native/SDL2 entry point for the testing sketch. Mirrors
+ *            src/custom_interface/main.cpp; setupGui()/loopGui() are shared
+ *            with testing.ino (see app_setup.h) so hardware and the emulator
+ *            run identical UI code.
  *
  * Compiled only when `ARDUINO` is *not* defined, i.e. for an emulator_* env
  * pointed at this src_dir:
  *
  *     pio run -e emulator_watch_ultra -t exec
+ *
+ * (with `src_dir = src/testing` in platformio.ini).
  */
 #ifndef ARDUINO
 #include "lvgl.h"

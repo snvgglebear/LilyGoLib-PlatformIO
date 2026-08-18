@@ -1,4 +1,5 @@
 #include "screen_state.h"
+#include <bosch/BoschSensorDataHelper.hpp>
 
 #define SCREEN_SLEEP_TIMEOUT_MS  10000
 
@@ -34,23 +35,39 @@ static void wake(void)
   equivalent virtual sensor on this SDK.*/
 #if defined(ARDUINO_T_WATCH_S3_ULTRA) || defined(ARDUINO_T_LORA_PAGER)
 #define HAS_WRIST_TILT_SENSOR
+static uint32_t last = 0;
 #endif
 
 static bool power_button_clicked = false;
 
-#ifdef HAS_WRIST_TILT_SENSOR
 static bool wrist_tilt_detected = false;
-
-static void wristTiltResultCb(uint8_t sensor_id, uint8_t *data, uint32_t size, uint64_t *timestamp, void *user_data)
-{
-    wrist_tilt_detected = true;
-}
-#endif
 
 static void powerButtonEventCb(DeviceEvent_t event, void *params, void *user_data)
 {
     if (instance.getPMUEventType(params) == PMU_EVENT_KEY_CLICKED) {
         power_button_clicked = true;
+    }
+}
+void ScreenTiltEvent(void) {
+ static SensorXYZ accel(SensorBHI260AP::ACCEL_PASSTHROUGH, instance.sensor);
+            // int resting_x= 90, resting_y= 20, resting_z= 23;
+            // int looking_x= 10, looking_y= -75, looking_z= 65;
+        //      Serial.printf("wrist tilt NOT detected x:%+6.2f y:%+6.2f z:%+6.2f\n",
+                            // accel.getX(), accel.getY(), accel.getZ());
+        if (accel.hasUpdated()) {
+        //static uint32_t last_log = 0;
+            if (abs(accel.getX() + LOOKING_X) <15 && abs(accel.getY() - LOOKING_Y) <15 && accel.getZ() > LOOKING_Z) {
+                if (millis() - last > 200) {
+                    Serial.printf("wrist tilt detected\n");
+                    wrist_tilt_detected = true;
+                    last = millis();
+                }
+            } else if (millis() - last > 1000) {
+                Serial.printf("wrist tilt NOT detected x:%+6.2f y:%+6.2f z:%+6.2f\n",
+                                accel.getX(), accel.getY(), accel.getZ());
+                wrist_tilt_detected = false;
+                last = millis();
+            }
     }
 }
 
@@ -69,15 +86,9 @@ void screen_state_init(void)
       0 Hz means "disabled". A gesture/event sensor still needs a nonzero
       rate to turn reporting on at all; the exact value doesn't change how
       often the gesture itself can fire.*/
-    bool registered = instance.sensor.onResultEvent(SensorBHI260AP::WRIST_TILT_GESTURE, wristTiltResultCb);
-    bool configured = registered && instance.sensor.configure(SensorBHI260AP::WRIST_TILT_GESTURE, 1, 0);
-
-    if (!configured) {
-        Serial.println("[screen_state] wrist-tilt gesture unavailable in this BHI260AP firmware image - wrist wake disabled, falling back to touch/power button only");
-        instance.sensor.getSensorInfo().printInfo(Serial);
-    } else {
-        Serial.println("[screen_state] wrist-tilt wake enabled");
-    }
+       
+        
+    
 #endif
 
     last_activity_ms = millis();
@@ -86,7 +97,7 @@ void screen_state_init(void)
 void manageSleepState(void)
 {
     bool touched = instance.getTouched();
-
+    ScreenTiltEvent();
     if (power_button_clicked) {
         power_button_clicked = false;
 
@@ -113,7 +124,7 @@ void manageSleepState(void)
     }
 #ifdef HAS_WRIST_TILT_SENSOR
     else if (wrist_tilt_detected) {
-        wrist_tilt_detected = false;
+        instance.wakeupDisplay();
 
         if (screen_asleep) {
             instance.wakeupDisplay();

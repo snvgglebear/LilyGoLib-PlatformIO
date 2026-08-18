@@ -3,7 +3,7 @@
 /**
  * @file      app_setup.h
  * @license   MIT
- * @brief     The screen/gesture/Gadgetbridge bring-up shared by main.ino's
+ * @brief     The screen/gesture/Gadgetbridge bring-up shared by custom_interface.ino's
  *            setup()/loop() and main.cpp's native entry point -- same split
  *            as src/factory's setupGui(), declared here and defined once in
  *            app_setup.cpp so hardware and the emulator build run identical

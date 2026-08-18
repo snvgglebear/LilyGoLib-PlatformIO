@@ -1,5 +1,17 @@
 #pragma once
 #include <lvgl.h>
+#if defined(ARDUINO_T_WATCH_S3_ULTRA) || defined(ARDUINO_T_LORA_PAGER)
+#define HAS_WRIST_TILT_SENSOR
+#endif
+#ifdef HAS_WRIST_TILT_SENSOR
+#define RESTING_X 90
+#define RESTING_Y 20
+#define RESTING_Z 23
+#define LOOKING_X 10
+#define LOOKING_Y -75
+#define LOOKING_Z 65
+#endif
+
 
 /*Call once from setup(), after instance.begin(): wires up the power button
   and (on boards with a BHI260AP) the wrist-tilt wake gesture.*/

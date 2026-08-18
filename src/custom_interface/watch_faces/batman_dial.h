@@ -22,7 +22,7 @@
 /// Radial room reserved OUTSIDE the dial for the battery arc and its readout.
 /// Widening it shrinks the dial and everything sized off it. Must be at least
 /// ARC_GAP + ARC_WIDTH for the arc to fit in the space it is given.
-#define ARC_SPACING         30
+#define ARC_SPACING         20
 
 #define small_tick_length   6
 #define large_tick_length   15
@@ -44,7 +44,7 @@
 #define HOUR_HAND_PCT       50
 #define MIN_HAND_PCT        75
 #define SEC_HAND_PCT        90
-#define HOUR_HAND_WIDTH     8
+#define HOUR_HAND_WIDTH     10
 #define MIN_HAND_WIDTH      4
 #define SEC_HAND_WIDTH      2
 #define HOUR_HAND_COLOR     lv_palette_main(LV_PALETTE_RED)

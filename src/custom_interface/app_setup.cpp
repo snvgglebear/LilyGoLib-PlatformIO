@@ -3,7 +3,7 @@
  * @license   MIT
  * @brief     Screen/gesture/Gadgetbridge bring-up. See app_setup.h.
  *
- * Ported out of main.ino unchanged except for the ARDUINO/native log line,
+ * Ported out of custom_interface.ino unchanged except for the ARDUINO/native log line,
  * so the same setupGui()/loopGui() build and drive the app on hardware
  * (twatch_ultra) and in the emulator (emulator_watch_ultra -t exec).
  */
