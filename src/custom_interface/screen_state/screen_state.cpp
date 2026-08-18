@@ -48,15 +48,23 @@ static void powerButtonEventCb(DeviceEvent_t event, void *params, void *user_dat
         power_button_clicked = true;
     }
 }
+#ifdef HAS_WRIST_TILT_SENSOR
+
+/*Constructed on first call rather than at file scope on purpose:
+  BoschSensorDataHelperBase's constructor caches getScaling() off the sensor,
+  so building this before instance.begin() has booted the BHI260AP firmware
+  would latch a bogus scale factor and make getX/getY/getZ read 0.0 forever.
+  First call comes from screen_state_init(), which runs after begin().*/
+static SensorXYZ &accelSensor(void)
+{
+    static SensorXYZ accel(SensorBHI260AP::ACCEL_PASSTHROUGH, instance.sensor);
+    return accel;
+}
+
 void ScreenTiltEvent(void) {
- static SensorXYZ accel(SensorBHI260AP::ACCEL_PASSTHROUGH, instance.sensor);
-            // int resting_x= 90, resting_y= 20, resting_z= 23;
-            // int looking_x= 10, looking_y= -75, looking_z= 65;
-        //      Serial.printf("wrist tilt NOT detected x:%+6.2f y:%+6.2f z:%+6.2f\n",
-                            // accel.getX(), accel.getY(), accel.getZ());
+    SensorXYZ &accel = accelSensor();
         if (accel.hasUpdated()) {
-        //static uint32_t last_log = 0;
-            if (abs(accel.getX() + LOOKING_X) <15 && abs(accel.getY() - LOOKING_Y) <15 && accel.getZ() > LOOKING_Z) {
+            if (abs(accel.getX() + LOOKING_X) <15 && abs(accel.getY() + LOOKING_Y) <15 && abs(accel.getZ() + LOOKING_Z<15)) {
                 if (millis() - last > 200) {
                     Serial.printf("wrist tilt detected\n");
                     wrist_tilt_detected = true;
@@ -71,24 +79,27 @@ void ScreenTiltEvent(void) {
     }
 }
 
+#endif /*HAS_WRIST_TILT_SENSOR*/
+
 void screen_state_init(void)
 {
     instance.onEvent(powerButtonEventCb, POWER_EVENT, NULL);
 
 #ifdef HAS_WRIST_TILT_SENSOR
-    /*Whether this actually fires depends on the Bosch fusion firmware blob
-      LilyGoUltra::initSensor() flashed (BOSCH_BHI260_KLIO / BOSCH_BHI260_GPIO)
-      exposing WRIST_TILT_GESTURE. SensorLib logs failures via log_e(), but
-      CORE_DEBUG_LEVEL=0 in this project silences that, so check + report
-      over Serial directly instead of trusting it silently worked.
+    /*enable() is what registers the result callback *and* configures the
+      virtual sensor; without it ACCEL_PASSTHROUGH never reports, so
+      hasUpdated() stays false forever and ScreenTiltEvent() prints nothing.
 
-      sample_rate is not a polling interval here - for BHY2 virtual sensors
-      0 Hz means "disabled". A gesture/event sensor still needs a nonzero
-      rate to turn reporting on at all; the exact value doesn't change how
-      often the gesture itself can fire.*/
-       
-        
-    
+      sample_rate is not a polling interval - for BHY2 virtual sensors 0 Hz
+      means "disabled". 25 Hz per the plan: fast enough for a deliberate raise
+      without the FIFO traffic of the 100 Hz used in the SDK examples.
+
+      SensorLib reports failures via log_e(), which CORE_DEBUG_LEVEL=0
+      silences in this project, so check the return and say so over Serial.*/
+    if (!accelSensor().enable(/*sample_rate*/ 25.0f, /*report_latency_ms*/ 0)) {
+        Serial.printf("[screen_state] ACCEL_PASSTHROUGH enable failed - wrist tilt disabled\n");
+    }
+
 #endif
 
     last_activity_ms = millis();
@@ -97,7 +108,9 @@ void screen_state_init(void)
 void manageSleepState(void)
 {
     bool touched = instance.getTouched();
+#ifdef HAS_WRIST_TILT_SENSOR
     ScreenTiltEvent();
+#endif
     if (power_button_clicked) {
         power_button_clicked = false;
 

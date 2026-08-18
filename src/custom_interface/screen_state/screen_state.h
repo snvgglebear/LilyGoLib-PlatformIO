@@ -8,8 +8,8 @@
 #define RESTING_Y 20
 #define RESTING_Z 23
 #define LOOKING_X 10
-#define LOOKING_Y -75
-#define LOOKING_Z 65
+#define LOOKING_Y -95
+#define LOOKING_Z 48
 #endif
 
 
