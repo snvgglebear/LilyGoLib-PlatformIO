@@ -4,12 +4,23 @@
 #define HAS_WRIST_TILT_SENSOR
 #endif
 #ifdef HAS_WRIST_TILT_SENSOR
-#define RESTING_X 90
-#define RESTING_Y 20
-#define RESTING_Z 23
-#define LOOKING_X 10
-#define LOOKING_Y -95
-#define LOOKING_Z 48
+/*Raise-to-wake thresholds, in GRAVITY_VECTOR units. That sensor reports a
+  unit-normalised "which way is down", so each component is a direction cosine
+  in -1..+1 -- not m/s^2, and not degrees.
+
+  Measured over 124 samples of worn use: raised-to-look sits at z +0.74..+0.98
+  (mean +0.89), arm-down at z -0.69..+0.30 (mean +0.00), with only 8% of
+  samples anywhere between. One axis separates the two states cleanly, so
+  there is nothing to gain from also constraining x and y.
+
+  Two thresholds rather than one because a single edge chatters while the wrist
+  hovers near it; the gap is the hysteresis band.*/
+#define WRIST_RAISED_Z    0.70f
+#define WRIST_RELEASED_Z  0.40f
+
+/*A deliberate raise holds the angle; an arm swing crosses it and keeps going.
+  Generous on purpose -- tighten only if raises feel slow to register.*/
+#define WRIST_SETTLE_MS   200
 #endif
 
 

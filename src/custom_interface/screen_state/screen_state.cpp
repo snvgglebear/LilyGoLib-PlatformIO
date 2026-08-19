@@ -35,7 +35,6 @@ static void wake(void)
   equivalent virtual sensor on this SDK.*/
 #if defined(ARDUINO_T_WATCH_S3_ULTRA) || defined(ARDUINO_T_LORA_PAGER)
 #define HAS_WRIST_TILT_SENSOR
-static uint32_t last = 0;
 #endif
 
 static bool power_button_clicked = false;
@@ -50,32 +49,104 @@ static void powerButtonEventCb(DeviceEvent_t event, void *params, void *user_dat
 }
 #ifdef HAS_WRIST_TILT_SENSOR
 
-/*Constructed on first call rather than at file scope on purpose:
-  BoschSensorDataHelperBase's constructor caches getScaling() off the sensor,
-  so building this before instance.begin() has booted the BHI260AP firmware
-  would latch a bogus scale factor and make getX/getY/getZ read 0.0 forever.
-  First call comes from screen_state_init(), which runs after begin().*/
-static SensorXYZ &accelSensor(void)
+/*The gravity vector is read straight out of bhy2's FIFO rather than through
+  SensorXYZ, because SensorLib's BoschParseCallbackManager cannot be used
+  safely here.
+
+  Its dispatch bounds the scan with the callback's "size" *parameter* - the
+  frame's payload length - instead of the same-named member holding the entry
+  count (BoschParseCallbackManager.hpp:151, compiled because __GNUC__ < 10 on
+  this toolchain). Its storage is raw malloc'd memory whose Entry constructors
+  never run. A gravity frame is 7 bytes, so with fewer than 7 registered
+  callbacks the scan walks off the end of the initialised entries and tests
+  uninitialised heap: a garbage .cb that passes the NULL check, and a garbage
+  .id with a 1-in-256 chance of matching, at which point it calls a junk
+  function pointer. At 25 Hz that is a crash within seconds.
+
+  Subscribing extra sensors to pad the array would only hide it. Registering
+  directly in bhy2's parse table replaces SensorLib's parseData for this id, so
+  the broken manager is never entered at all.*/
+static float gravity_scale = 0.0f;
+static volatile float gravity_z = 0.0f;
+static volatile bool gravity_updated = false;
+
+static void gravityFifoCb(const struct bhy2_fifo_parse_data_info *info, void *private_data)
 {
-    static SensorXYZ accel(SensorBHI260AP::ACCEL_PASSTHROUGH, instance.sensor);
-    return accel;
+    /*data_ptr already excludes the leading sensor-id byte, so a 7-byte event
+      leaves the 6 bytes of int16 xyz.*/
+    if (!info || info->data_size < 7) {
+        return;
+    }
+    struct bhy2_data_xyz d;
+    bhy2_parse_xyz(info->data_ptr, &d);
+    gravity_z = d.z * gravity_scale;
+    gravity_updated = true;
 }
 
-void ScreenTiltEvent(void) {
-    SensorXYZ &accel = accelSensor();
-        if (accel.hasUpdated()) {
-            if (abs(accel.getX() + LOOKING_X) <15 && abs(accel.getY() + LOOKING_Y) <15 && abs(accel.getZ() + LOOKING_Z<15)) {
-                if (millis() - last > 200) {
-                    Serial.printf("wrist tilt detected\n");
-                    wrist_tilt_detected = true;
-                    last = millis();
-                }
-            } else if (millis() - last > 1000) {
-                Serial.printf("wrist tilt NOT detected x:%+6.2f y:%+6.2f z:%+6.2f\n",
-                                accel.getX(), accel.getY(), accel.getZ());
-                wrist_tilt_detected = false;
-                last = millis();
-            }
+/*bhy2_register_fifo_parse_callback() only fills free slots and never replaces,
+  while dispatch returns the first id match - and SensorBHI260AP::initImpl()
+  has already claimed every available id for parseData. The slot has to be
+  overwritten in place to take delivery.*/
+static bool hookFifoId(uint8_t id, bhy2_fifo_parse_callback_t cb)
+{
+    bhy2_dev *dev = instance.sensor.getHandler();
+    if (!dev) {
+        return false;
+    }
+    for (uint8_t i = 0; i < BHY2_MAX_SIMUL_SENSORS; i++) {
+        if (dev->table[i].sensor_id == id) {
+            dev->table[i].callback = cb;
+            dev->table[i].callback_ref = NULL;
+            return true;
+        }
+    }
+    return false;
+}
+
+/*RAISED is entered only via SETTLING: a deliberate raise holds the angle, an
+  arm swing passes through it and leaves before the settle time elapses. The
+  release threshold sits well below the raise threshold so that a wrist hovering
+  near the boundary cannot chatter the display on and off.*/
+enum WristState {
+    WRIST_DOWN,
+    WRIST_SETTLING,
+    WRIST_RAISED,
+};
+
+static WristState wrist_state = WRIST_DOWN;
+static uint32_t wrist_settle_started_ms = 0;
+
+void ScreenTiltEvent(void)
+{
+    if (!gravity_updated) {
+        return;
+    }
+    gravity_updated = false;
+
+    float z = gravity_z;
+
+    switch (wrist_state) {
+    case WRIST_DOWN:
+        if (z > WRIST_RAISED_Z) {
+            wrist_state = WRIST_SETTLING;
+            wrist_settle_started_ms = millis();
+        }
+        break;
+
+    case WRIST_SETTLING:
+        if (z <= WRIST_RAISED_Z) {
+            wrist_state = WRIST_DOWN;   /*passed through without settling - not a raise*/
+        } else if (millis() - wrist_settle_started_ms >= WRIST_SETTLE_MS) {
+            wrist_state = WRIST_RAISED;
+            wrist_tilt_detected = true; /*one-shot edge, consumed by manageSleepState()*/
+        }
+        break;
+
+    case WRIST_RAISED:
+        if (z < WRIST_RELEASED_Z) {
+            wrist_state = WRIST_DOWN;
+        }
+        break;
     }
 }
 
@@ -87,19 +158,30 @@ void screen_state_init(void)
 
 #ifdef HAS_WRIST_TILT_SENSOR
     /*enable() is what registers the result callback *and* configures the
-      virtual sensor; without it ACCEL_PASSTHROUGH never reports, so
-      hasUpdated() stays false forever and ScreenTiltEvent() prints nothing.
+      virtual sensor; without it GRAVITY_VECTOR never reports and
+      hasUpdated() stays false forever, leaving the detector permanently idle.
 
       sample_rate is not a polling interval - for BHY2 virtual sensors 0 Hz
-      means "disabled". 25 Hz per the plan: fast enough for a deliberate raise
+      means "disabled". 25 Hz is fast enough to catch a deliberate raise
       without the FIFO traffic of the 100 Hz used in the SDK examples.
 
       SensorLib reports failures via log_e(), which CORE_DEBUG_LEVEL=0
       silences in this project, so check the return and say so over Serial.*/
-    if (!accelSensor().enable(/*sample_rate*/ 25.0f, /*report_latency_ms*/ 0)) {
-        Serial.printf("[screen_state] ACCEL_PASSTHROUGH enable failed - wrist tilt disabled\n");
-    }
+    gravity_scale = instance.sensor.getScaling(SensorBHI260AP::GRAVITY_VECTOR);
 
+    /*configure() enables the virtual sensor; hookFifoId() takes delivery of it.
+      Both must succeed or the detector silently never runs, and SensorLib
+      reports its own failures through log_e(), which CORE_DEBUG_LEVEL=0
+      silences in this project.
+
+      sample_rate is not a polling interval - for BHY2 virtual sensors 0 Hz
+      means "disabled". 25 Hz is fast enough for a deliberate raise without the
+      FIFO traffic of the 100 Hz used in the SDK examples.*/
+    if (!instance.sensor.configure(SensorBHI260AP::GRAVITY_VECTOR, /*sample_rate*/ 25.0f,
+                                   /*report_latency_ms*/ 0) ||
+        !hookFifoId(SensorBHI260AP::GRAVITY_VECTOR, gravityFifoCb)) {
+        Serial.printf("[screen_state] GRAVITY_VECTOR setup failed - raise-to-wake disabled\n");
+    }
 #endif
 
     last_activity_ms = millis();
@@ -137,7 +219,10 @@ void manageSleepState(void)
     }
 #ifdef HAS_WRIST_TILT_SENSOR
     else if (wrist_tilt_detected) {
-        instance.wakeupDisplay();
+        /*One-shot: cleared here, re-armed by the next DOWN->RAISED transition.
+          Leaving it latched would hold the idle timer open for as long as the
+          wrist stayed up, so the screen could never time out while raised.*/
+        wrist_tilt_detected = false;
 
         if (screen_asleep) {
             instance.wakeupDisplay();
