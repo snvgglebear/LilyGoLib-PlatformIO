@@ -40,8 +40,24 @@ lv_obj_t *s_batt_bar = nullptr;
 lv_obj_t *s_batt_pct_label = nullptr;
 lv_obj_t *s_brightness_slider = nullptr;
 lv_obj_t *s_brightness_pct_label = nullptr;
+lv_obj_t *s_settings_button = nullptr;
+
+QstAction s_action = nullptr;       ///< NULL: no gear shown
 
 void quick_settings_tray_close(void);
+
+void settingsClickCb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    if (!s_action) {
+        return;
+    }
+    // Close first: the tray is on lv_layer_top(), so an action that loads a
+    // screen would otherwise leave the tray hanging over it. Closing is
+    // animated and the screen switch happens underneath it, which is fine.
+    quick_settings_tray_close();
+    s_action();
+}
 
 const char *batteryIconFor(int percent)
 {
@@ -216,6 +232,21 @@ void buildFooter(lv_obj_t *tray)
     lv_label_set_text(grabber, LV_SYMBOL_UP);
     lv_obj_add_flag(grabber, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(grabber, grabberClickCb, LV_EVENT_CLICKED, NULL);
+
+    // Pinned to the right edge of the band rather than flowed next to the
+    // grabber, so the grabber stays centred where the thumb already expects it.
+    // The band came from usable_area_place(), so its right edge is already
+    // clear of the bezel.
+    s_settings_button = lv_label_create(band);
+    lv_obj_add_flag(s_settings_button, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_set_style_text_color(s_settings_button, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_text_font(s_settings_button, &lv_font_montserrat_20, 0);
+    lv_label_set_text(s_settings_button, LV_SYMBOL_SETTINGS);
+    lv_obj_align(s_settings_button, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_set_ext_click_area(s_settings_button, 12);
+    lv_obj_add_flag(s_settings_button, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_settings_button, settingsClickCb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_settings_button, LV_OBJ_FLAG_HIDDEN);   // until an action is set
 }
 
 void quick_settings_tray_close(void)
@@ -273,6 +304,18 @@ void quick_settings_tray_init(void)
     buildHeader(s_tray);
     buildBrightnessRow(s_tray);
     buildFooter(s_tray);
+}
+
+void quick_settings_tray_set_action(QstAction cb)
+{
+    s_action = cb;
+    if (s_settings_button) {
+        if (cb) {
+            lv_obj_remove_flag(s_settings_button, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_settings_button, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 }
 
 void quick_settings_tray_open(void)

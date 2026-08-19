@@ -13,3 +13,7 @@
 /// Builds the face inside usable_area_rect(screen) and starts its 1 Hz refresh
 /// timer. Call once, after usable_area_init() has styled/clipped @p screen.
 void simple_face_init(lv_obj_t *screen);
+
+/// Stop the refresh timer and delete the face's widgets, leaving @p screen as
+/// it was before simple_face_init(). Safe to call when nothing was built.
+void simple_face_deinit(void);

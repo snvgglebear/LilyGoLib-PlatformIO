@@ -1,16 +1,60 @@
 #include "screen_state.h"
-#include <bosch/BoschSensorDataHelper.hpp>
 
-#define SCREEN_SLEEP_TIMEOUT_MS  10000
+#include "../app_config.h"
 
 static bool screen_asleep = false;
 static uint32_t last_activity_ms = 0;
 static ScreenWakeCallback wake_cb = NULL;
 
+/*Runtime, not a #define: the settings page changes this live. 0 means never.*/
+static uint32_t sleep_timeout_ms = (uint32_t)APP_SCREEN_TIMEOUT_DEFAULT_S * 1000u;
+static bool wrist_wake_enabled = APP_WRIST_WAKE_DEFAULT;
+
 void screen_state_set_wake_cb(ScreenWakeCallback cb)
 {
     wake_cb = cb;
 }
+
+void screen_state_set_timeout_ms(uint32_t ms)
+{
+    sleep_timeout_ms = ms;
+    /*Restart the countdown rather than measuring the new timeout against an
+      idle period the user spent under the old one -- otherwise shortening the
+      timeout on the settings page can sleep the display mid-tap.*/
+    noteActivity();
+}
+
+uint32_t screen_state_get_timeout_ms(void)
+{
+    return sleep_timeout_ms;
+}
+
+void screen_state_set_wrist_wake(bool enable)
+{
+    wrist_wake_enabled = enable;
+}
+
+bool screen_state_get_wrist_wake(void)
+{
+#ifdef HAS_WRIST_TILT_SENSOR
+    return wrist_wake_enabled;
+#else
+    return false;
+#endif
+}
+
+/*True when the idle timer has run out. Factored out because the ARDUINO and
+  native branches below both need it, and both must skip -- not evaluate -- the
+  comparison when the timeout is disabled.*/
+static bool idleExpired(uint32_t now_ms)
+{
+    return sleep_timeout_ms != 0 && (now_ms - last_activity_ms) >= sleep_timeout_ms;
+}
+
+/*Resets the idle countdown. millis() on hardware, the host monotonic clock
+  natively, so each branch below defines it -- forward declared here because
+  screen_state_set_timeout_ms() above calls it.*/
+static void noteActivity(void);
 
 /// Flips screen_asleep and fires wake_cb, but only on an actual
 /// asleep->awake edge -- safe to call from anywhere that just turned the
@@ -29,6 +73,7 @@ static void wake(void)
 #ifdef ARDUINO
 
 #include <LilyGoLib.h>
+#include <bosch/BoschSensorDataHelper.hpp>   // SensorLib; hardware-only, see the wrist-tilt block below
 
 /*Only the BHI260AP-equipped boards (T-Watch-Ultra, T-LoRa-Pager) can raise a
   wrist-tilt gesture - T-Watch-S3 uses a BMA423 instead, which has no
@@ -221,22 +266,33 @@ void manageSleepState(void)
     else if (wrist_tilt_detected) {
         /*One-shot: cleared here, re-armed by the next DOWN->RAISED transition.
           Leaving it latched would hold the idle timer open for as long as the
-          wrist stayed up, so the screen could never time out while raised.*/
+          wrist stayed up, so the screen could never time out while raised.
+          Cleared even when the setting is off, for the same reason -- the
+          detector keeps running, only the wake is suppressed.*/
         wrist_tilt_detected = false;
 
-        if (screen_asleep) {
-            instance.wakeupDisplay();
-            wake();
+        /*Gate the whole arm, not just the wake: with raise-to-wake off, a
+          raise must not hold an awake screen open either, or the idle timeout
+          would still be unreachable while the wrist is up.*/
+        if (wrist_wake_enabled) {
+            if (screen_asleep) {
+                instance.wakeupDisplay();
+                wake();
+            }
+            last_activity_ms = millis();
         }
-
-        last_activity_ms = millis();
     }
 #endif
 
-    if (!screen_asleep && (millis() - last_activity_ms >= SCREEN_SLEEP_TIMEOUT_MS)) {
+    if (!screen_asleep && idleExpired(millis())) {
         instance.sleepDisplay();
         screen_asleep = true;
     }
+}
+
+static void noteActivity(void)
+{
+    last_activity_ms = millis();
 }
 
 #else // !ARDUINO -- native/SDL2 emulator build
@@ -289,10 +345,15 @@ void manageSleepState(void)
         last_activity_ms = hostMillis();
     }
 
-    if (!screen_asleep && (hostMillis() - last_activity_ms >= SCREEN_SLEEP_TIMEOUT_MS)) {
+    if (!screen_asleep && idleExpired(hostMillis())) {
         printf("[screen_state] sleep (idle timeout)\n");
         screen_asleep = true;
     }
+}
+
+static void noteActivity(void)
+{
+    last_activity_ms = hostMillis();
 }
 
 #endif // ARDUINO

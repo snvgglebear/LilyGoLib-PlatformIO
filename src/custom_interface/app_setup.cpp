@@ -16,8 +16,9 @@
 #include "gadgetbridge_ble/gb_app.h"
 #include "gadgetbridge_ble/gb_link.h"
 #include "gadgetbridge_ble/gb_ui.h"
-#include "watch_faces/simple_face.h"
-#include "watch_faces/batman_dial.h"   // alternate analog face -- see setupGui()
+#include "settings/app_settings.h"
+#include "settings/settings_screen.h"
+#include "watch_faces/face_registry.h"
 #include "quick_settings_tray/quick_settings_tray.h"
 
 #ifdef ARDUINO
@@ -37,6 +38,29 @@ namespace
 lv_obj_t *screen_home;
 lv_obj_t *screen_gadgetbridge;
 
+/**
+ * True when the drag that produced this gesture is already scrolling
+ * something, in which case the gesture is a side effect of that scroll and
+ * not a screen navigation the user asked for.
+ *
+ * LVGL runs indev_gesture() on every LV_EVENT_PRESSING regardless of whether
+ * a scroll is in progress, and LV_OBJ_FLAG_GESTURE_BUBBLE is set by default
+ * on every object with a parent, so one finger drag both scrolls a list (or
+ * swipes between tabs) *and* fires LV_EVENT_GESTURE at the screen. Scroll
+ * ownership is settled by the time a gesture arrives -- LVGL claims a scroll
+ * at 10px of travel (LV_INDEV_DEF_SCROLL_LIMIT) but only fires the gesture at
+ * 50px (LV_INDEV_DEF_GESTURE_LIMIT) -- so this test is reliable.
+ *
+ * It is not a blanket mute: lv_indev_find_scroll_obj() only claims an object
+ * that can actually scroll further in the drag's direction, so a list already
+ * at its end claims nothing and the gesture goes through as before. That is
+ * "scroll first, navigate when there is nothing left to scroll".
+ */
+bool gestureOwnedByScroll(lv_indev_t *indev)
+{
+    return lv_indev_get_scroll_obj(indev) != NULL;
+}
+
 /// Fires on any gesture that bubbles up to screen_home; only a downward
 /// swipe (LV_DIR_BOTTOM: finger moves toward the bottom of the screen)
 /// switches away from the watch face.
@@ -44,14 +68,20 @@ void onHomeGesture(lv_event_t *e)
 {
     LV_UNUSED(e);
     lv_indev_t *indev = lv_indev_active();
-    if (indev && lv_indev_get_gesture_dir(indev) == LV_DIR_BOTTOM) {
+    if (!indev || gestureOwnedByScroll(indev)) {
+        return;   // nothing on the watch face scrolls today; guards the next thing that does
+    }
+    if (lv_indev_get_gesture_dir(indev) == LV_DIR_BOTTOM) {
+        gb_ui_show_home();   // always enter the Gadgetbridge screen on its launcher grid
         lv_screen_load_anim(screen_gadgetbridge, LV_SCR_LOAD_ANIM_MOVE_BOTTOM, 220, 0, false);
     }
 }
 
 /// Mirror of onHomeGesture() for the Gadgetbridge screen: an upward swipe
 /// (LV_DIR_TOP) returns to the watch face. A downward swipe (LV_DIR_BOTTOM)
-/// opens the quick-settings tray instead -- deliberately not wired on
+/// opens the quick-settings tray instead. Left/right are not handled here --
+/// they belong to the tabview's page navigation, and gestureOwnedByScroll()
+/// stops them reaching this handler at all -- deliberately not wired on
 /// screen_home, whose own downward swipe already means "go to Gadgetbridge"
 /// (see swipe-down-quick-settings-tray-plan.md's scope: the tray reads
 /// battery/brightness, which the watch face already shows).
@@ -59,8 +89,8 @@ void onGadgetbridgeGesture(lv_event_t *e)
 {
     LV_UNUSED(e);
     lv_indev_t *indev = lv_indev_active();
-    if (!indev) {
-        return;
+    if (!indev || gestureOwnedByScroll(indev)) {
+        return;   // scrolling a list, or swiping between the tabview's pages
     }
     lv_dir_t dir = lv_indev_get_gesture_dir(indev);
     if (dir == LV_DIR_TOP) {
@@ -87,11 +117,18 @@ void setupGui()
     screen_state_init();
     quick_settings_tray_init();  // lv_layer_top(), so it overlays every screen below -- needs screen_w/h from usable_area_init()
 
+    /*Before the watch face: the store decides which face that is, and it also
+      pushes the saved brightness and idle timeout into the subsystems set up
+      just above.*/
+    app_settings_begin();
+
     screen_home = lv_screen_active();
-    //simple_face_init(screen_home);
-    batman_dial_init(screen_home);   // swap in for the analog face instead -- also comment out simple_face_init() above
+    watch_face_begin(screen_home);   // builds the saved face; the settings page switches it later
     lv_obj_add_event_cb(screen_home, onHomeGesture, LV_EVENT_GESTURE, NULL);
     screen_state_set_wake_cb(onScreenWake);
+
+    settings_screen_init();
+    quick_settings_tray_set_action(settings_screen_open);   // the tray's gear
 
     screen_gadgetbridge = lv_obj_create(NULL);
     usable_area_style_screen(screen_gadgetbridge);   // usable_area_init() only styled screen_home

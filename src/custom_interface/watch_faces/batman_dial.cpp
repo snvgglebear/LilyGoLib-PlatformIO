@@ -35,6 +35,11 @@
 #include <time.h>
 #endif
 
+/// The face's own root inside the screen, so batman_dial_deinit() can delete
+/// the whole face by deleting one object rather than tracking every widget.
+static lv_obj_t *face_root;
+static lv_timer_t *face_timer;
+
 static lv_obj_t *hand_hour;
 static lv_obj_t *hand_min;
 static lv_obj_t *hand_sec;
@@ -149,7 +154,16 @@ static void build_face(lv_obj_t *screen)
     // build the dial inside the largest rect that's safe everywhere under
     // the curved bezel rather than against the screen's raw bounds.
     //lv_obj_t *area = usable_area_rect(screen);
-    lv_obj_t *area = screen;
+    //
+    // A plain full-size container rather than `screen` itself: the face has to
+    // be removable (the settings page switches faces at runtime), and deleting
+    // `screen` to remove the face would take the home screen with it.
+    // Style-less and transparent, so this is the same pixels as before.
+    lv_obj_t *area = lv_obj_create(screen);
+    lv_obj_remove_style_all(area);
+    lv_obj_set_size(area, LV_PCT(100), LV_PCT(100));
+    lv_obj_remove_flag(area, LV_OBJ_FLAG_SCROLLABLE);
+    face_root = area;
 
     // usable_area_rect() sets the size as a style, which only marks the layout
     // dirty -- lv_obj_get_width() reads the cached coords, so without this it
@@ -263,6 +277,10 @@ static void build_face(lv_obj_t *screen)
     // ARC_SPACING >= ARC_GAP + ARC_WIDTH.
     int32_t arc_r = radius + ARC_GAP + ARC_WIDTH;
 
+    // Re-initialised on every build, which is safe because batman_dial_deinit()
+    // deletes the observing widgets first: LVGL auto-unsubscribes an observer
+    // when the object it is bound to is deleted (unsubscribe_on_delete_cb,
+    // lv_observer.c), so the subject has no live observers by this point.
     lv_subject_init_int(&batt_subject, 0);
 
     lv_obj_t *batt_arc = make_arc(area, ARC_COLOR, ARC_WIDTH, arc_r,
@@ -310,6 +328,26 @@ void batman_dial_init(lv_obj_t *screen)
 {
     build_face(screen);
 
-    lv_timer_t *timer = lv_timer_create(refresh, REFRESH_INTERVAL_MS, NULL);
-    lv_timer_ready(timer);      // paint immediately rather than after one tick
+    // Kept in a static so batman_dial_deinit() can stop it; a face that is torn
+    // down and rebuilt would otherwise accumulate one timer per switch, each
+    // still driving hands that no longer exist -- and the visible symptom is a
+    // second hand that ticks twice per second, not a crash.
+    face_timer = lv_timer_create(refresh, REFRESH_INTERVAL_MS, NULL);
+    lv_timer_ready(face_timer);  // paint immediately rather than after one tick
+}
+
+void batman_dial_deinit(void)
+{
+    // Timer first: deleting the widgets while it is still armed leaves one
+    // tick able to run against freed hands.
+    if (face_timer) {
+        lv_timer_delete(face_timer);
+        face_timer = NULL;
+    }
+    if (face_root) {
+        lv_obj_delete(face_root);   // unsubscribes the arc/readout from batt_subject
+        face_root = NULL;
+        lv_subject_deinit(&batt_subject);
+    }
+    hand_hour = hand_min = hand_sec = NULL;
 }

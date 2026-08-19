@@ -25,3 +25,18 @@ void quick_settings_tray_init(void);
 /// from a gesture handler on any non-watchface screen -- never from the
 /// watchface's, which owns swipe-down for its own navigation.
 void quick_settings_tray_open(void);
+
+/**
+ * Wire up the footer's gear button.
+ *
+ * A callback rather than the tray calling settings_screen_open() itself: this
+ * module knows about the clock, the battery and the backlight and nothing else
+ * in the app, and a direct call would make it depend on the settings module for
+ * one button. setupGui() connects the two. With no action set the gear is
+ * hidden, so the tray still stands alone.
+ *
+ * The tray closes itself before @p cb runs -- it lives on lv_layer_top() and
+ * would otherwise hang over whatever screen the action loads.
+ */
+typedef void (*QstAction)(void);
+void quick_settings_tray_set_action(QstAction cb);

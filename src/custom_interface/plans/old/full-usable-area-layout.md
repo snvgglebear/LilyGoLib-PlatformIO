@@ -126,49 +126,24 @@ lv_obj_t *footer_spacer ... // the tab bar is lv_tabview's own bottom strip,
 with `LV_PCT(100)` and flex, so it just inherits whatever width `header`
 (via `usable_area_place()`) hands it. Same for the tab pages under `content`.
 
-`HEADER_H`, `CONTENT_H` (and the tab bar's own height, already
-`GB_TAB_BAR_HEIGHT_LARGE`/`_SMALL` from `gb_ui_metrics.h`) become the
-knobs: add them next to those constants, sized so
+`HEADER_H` and `CONTENT_H` become the knobs: add them next to those constants, sized so
 `usable_area_inset_for_band()` over the content band comes out small (see
 §2). This needs a hardware/emulator round of eyeballing to land on numbers
 that look right rather than deriving them purely on paper - the constants
-in `gb_ui_metrics.h` were clearly tuned that way too (`GB_TAB_BAR_HEIGHT_*`
-differs 48 vs 34 between boards, not derived from a formula in the file).
+in `gb_ui_metrics.h` were clearly tuned that way too (the per-board large/small
+pairs differ by eyeballed amounts, not by a formula in the file).
 
-## 4. Open question: the tab bar is `lv_tabview`'s own strip, not ours
+## 4. ~~Open question: the tab bar~~ -- resolved, no longer applies
 
-`buildAlertsTab()` et al. build *into* pages `lv_tabview_add_tab()` hands
-back - the tab bar itself (`lv_tabview_set_tab_bar_position/size`) is drawn
-by the tabview widget as part of its own box, not a sibling container this
-code positions. That means the "footer" band in §2 isn't something
-`gb_ui_begin()` can `usable_area_place()` independently the way it can the
-header - the tabview's own width (from `content` above) determines the tab
-bar's width too, and the tab bar inherits whatever inset `content` was
-given for its *worst* y (which, if `content` runs all the way down to
-`screen_h`, means the tab bar's band is once again the dominant curve
-constraint, undoing the point of splitting header out).
-
-Two ways to resolve this, worth deciding before implementing rather than
-discovering mid-refactor:
-
-- Give `content` a `CONTENT_H` that stops short of the bottom curve (mirror
-  of the header logic in §2, computed from the bottom up), and put a plain
-  spacer between the bottom of `content` and `screen_h` - the tabview
-  (including its own tab bar) then lives entirely in the already-open
-  middle section and can be close to full width throughout, at the cost of
-  some unused vertical space right at the bottom instead of the tab bar
-  using it.
-- Or accept that the tab bar specifically stays at the current flat inset
-  (it's short and only holds four icon+label tabs, so the width loss there
-  is cheap), and only lift the header out from under the shared inset,
-  since that's the band whose loss is easiest to eliminate.
-
-Second option is less code (no separate footer band, no spacer arithmetic)
-and matches how little the tab bar actually needs the extra width. First
-option gets more of the panel back but adds a real vertical-space cost
-right where content most wants it (bottom of lists). Recommend starting
-with the second and only doing the fuller split if the tab bar still reads
-as visibly cramped once the header change is in.
+**Superseded.** This section asked how to place `lv_tabview`'s own bottom tab
+bar, which the app cannot position itself, given it sits in the bezel's bottom
+curve where the panel is narrowest.
+[`gadgetbridge-button-grid-nav.md`](gadgetbridge-button-grid-nav.md) has since
+removed the tab bar entirely -- navigation is a launcher grid on page 0 plus a
+home button in the status bar -- so the Gadgetbridge screen is now status bar +
+content, exactly the two-band shape section 2 wants, with no footer band to
+resolve. `GB_TAB_BAR_HEIGHT_LARGE`/`_SMALL` no longer exist in
+`gb_ui_metrics.h`; references to them in section 3 are historical.
 
 ## 5. Testing
 

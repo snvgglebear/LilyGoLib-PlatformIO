@@ -22,5 +22,10 @@
 /// before gb_app.begin().
 void gb_ui_begin(lv_obj_t *screen);
 
+/// Return the screen to its launcher grid, so entering it always lands on the
+/// grid rather than wherever the user last left off. Safe before gb_ui_begin()
+/// (no-op) and a no-op if the grid is already showing.
+void gb_ui_show_home(void);
+
 /// Listener handed to GbApp::begin(); refreshes whatever the change affected.
 void gb_ui_on_state_changed(GbStateChange change);

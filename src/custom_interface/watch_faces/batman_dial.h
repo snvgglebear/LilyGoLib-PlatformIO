@@ -89,3 +89,7 @@
 /// Builds the dial inside usable_area_rect(screen) and starts its refresh
 /// timer. Call once, after usable_area_init() has styled/clipped @p screen.
 void batman_dial_init(lv_obj_t *screen);
+
+/// Stop the refresh timer and delete the dial's widgets, leaving the screen as
+/// it was before batman_dial_init(). Safe to call when nothing was built.
+void batman_dial_deinit(void);

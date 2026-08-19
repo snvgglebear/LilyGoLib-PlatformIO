@@ -40,3 +40,17 @@ void manageSleepState(void);
   manageSleepState().*/
 typedef void (*ScreenWakeCallback)(void);
 void screen_state_set_wake_cb(ScreenWakeCallback cb);
+
+/*Idle timeout before the display sleeps, in milliseconds. 0 disables the
+  timeout entirely -- the comparison is skipped, not made against 0, so the
+  screen stays awake rather than sleeping instantly.
+
+  Seeded from app_config.h's APP_SCREEN_TIMEOUT_DEFAULT_S by
+  app_settings_begin(); the settings page changes it live.*/
+void screen_state_set_timeout_ms(uint32_t ms);
+uint32_t screen_state_get_timeout_ms(void);
+
+/*Raise-to-wake. A no-op (and always false) on boards without
+  HAS_WRIST_TILT_SENSOR, so callers do not need the #ifdef.*/
+void screen_state_set_wrist_wake(bool enable);
+bool screen_state_get_wrist_wake(void);

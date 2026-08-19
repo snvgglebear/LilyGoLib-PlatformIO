@@ -8,8 +8,11 @@
  * usable_area_rect() (see usable_area.h) instead of directly
  * against lv_screen_active(), so nothing lands under the Ultra's curved glass.
  *
- * Four tabs plus modal overlays:
+ * A launcher grid (page 0 of the tabview) opens four pages; the status bar's
+ * home button returns to it, and a left/right swipe walks between all five.
+ * Plus modal overlays:
  *
+ *   Grid    2x3 of tiles: one per page below, plus Settings (its own screen)
  *   Watch   clock, weather, next alarm, "ring my phone" (§6.3)
  *   Chats   SMS and chat threads (gb_messages.*), with a conversation view and
  *           replies (§6.6) routed by the thread's phone number
@@ -26,6 +29,8 @@
 
 #include "gb_link.h"
 #include "gb_ui_metrics.h"
+#include "../settings/app_settings.h"
+#include "../settings/settings_screen.h"
 #include "lvgl.h"
 
 #include <usable_area.h>
@@ -34,6 +39,9 @@ namespace
 {
 
 // -- widgets kept for refreshing ----------------------------------------
+
+lv_obj_t *s_tabview = nullptr;      ///< owns every page, including the grid
+lv_obj_t *s_home_button = nullptr;  ///< status bar; inert while the grid shows
 
 lv_obj_t *s_link_label = nullptr;
 lv_obj_t *s_battery_label = nullptr;
@@ -82,6 +90,16 @@ enum GbReplyTarget {
 GbReplyTarget s_reply_target = GB_REPLY_NONE;
 
 bool s_small_screen = false;        ///< 240x240 T-Watch-S3 rather than the Ultra
+
+/// Page order inside s_tabview. The launcher grid is page 0, so entering the
+/// screen lands on it and a left/right swipe walks Grid -> Watch -> ... -> Music.
+enum GbTab {
+    GB_TAB_GRID = 0,
+    GB_TAB_WATCH,
+    GB_TAB_CHATS,
+    GB_TAB_ALERTS,
+    GB_TAB_MUSIC,
+};
 
 const char *const GB_QUICK_REPLIES[] = {"OK", "On my way", "Call you later"};
 
@@ -253,6 +271,38 @@ void trackBox(lv_obj_t *box, lv_obj_t **slot)
     lv_obj_add_event_cb(box, [](lv_event_t * event) {
         *static_cast<lv_obj_t **>(lv_event_get_user_data(event)) = nullptr;
     }, LV_EVENT_DELETE, slot);
+}
+
+/**
+ * Close @p box by itself after the user's configured popup duration.
+ *
+ * Only the message popup gets one: a call, an alarm and "find device" are all
+ * things the user is expected to act on, and a timeout that dismissed them
+ * would lose the interaction rather than tidy it away.
+ *
+ * The timer is owned by the box -- deleted with it via LV_EVENT_DELETE -- so
+ * dismissing the popup early cannot leave a timer holding a dangling pointer,
+ * and a replacement popup cannot be closed by its predecessor's timer.
+ *
+ * That ownership survives the timer firing, which looks like a double delete
+ * and is not: the callback closes the box synchronously, whose LV_EVENT_DELETE
+ * handler deletes the timer from inside the timer's own callback, and
+ * lv_timer_exec() skips its "repeat count is over, delete" branch when
+ * state.timer_deleted was set during the call (lv_timer.c:339).
+ */
+void autoDismiss(lv_obj_t *box, uint32_t after_ms)
+{
+    if (after_ms == 0) {
+        return;
+    }
+    lv_timer_t *timer = lv_timer_create([](lv_timer_t * t) {
+        lv_msgbox_close(static_cast<lv_obj_t *>(lv_timer_get_user_data(t)));
+    }, after_ms, box);
+    lv_timer_set_repeat_count(timer, 1);
+
+    lv_obj_add_event_cb(box, [](lv_event_t * event) {
+        lv_timer_delete(static_cast<lv_timer_t *>(lv_event_get_user_data(event)));
+    }, LV_EVENT_DELETE, timer);
 }
 
 // -- event handlers ------------------------------------------------------
@@ -763,6 +813,7 @@ void maybeShowMessagePopup()
     lv_msgbox_add_close_button(s_message_box);
     sizeMsgboxStrips(s_message_box);
     addSwipeToDismiss(s_message_box, messageBoxSwiped);
+    autoDismiss(s_message_box, app_settings().notif_popup_ms);
 }
 
 void refreshMusic()
@@ -866,17 +917,150 @@ void tick(lv_timer_t *timer)
     refreshStatusBar();
 }
 
+// -- navigation ----------------------------------------------------------
+
+/// The grid is where the home button goes, so on the grid it has nothing to
+/// do. Kept in the layout (dimmed + disabled) rather than hidden, so the link
+/// label does not jump left and back as the user moves between pages.
+void refreshHomeButton()
+{
+    if (!s_home_button || !s_tabview) {
+        return;
+    }
+    const bool on_grid = lv_tabview_get_tab_active(s_tabview) == GB_TAB_GRID;
+    lv_obj_set_style_opa(s_home_button, on_grid ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    if (on_grid) {
+        lv_obj_add_state(s_home_button, LV_STATE_DISABLED);
+    } else {
+        lv_obj_remove_state(s_home_button, LV_STATE_DISABLED);
+    }
+}
+
+/// LV_EVENT_VALUE_CHANGED from s_tabview, i.e. the *swipe* path only:
+/// lv_tabview sends it from cont_scroll_end_event_cb() and never from
+/// lv_tabview_set_active(), so the tap paths below call this themselves.
+void tabChanged(lv_event_t *event)
+{
+    LV_UNUSED(event);
+    refreshHomeButton();
+}
+
+void showTab(uint32_t tab, lv_anim_enable_t animate)
+{
+    lv_tabview_set_active(s_tabview, tab, animate);
+    refreshHomeButton();
+}
+
+void homeClicked(lv_event_t *event)
+{
+    LV_UNUSED(event);
+    showTab(GB_TAB_GRID, LV_ANIM_ON);
+}
+
+void gridTileClicked(lv_event_t *event)
+{
+    const GbGridEntry *entry = (const GbGridEntry *)lv_event_get_user_data(event);
+    if (entry->open) {
+        entry->open();
+        return;
+    }
+    showTab(entry->tab, GB_GRID_ANIMATE_TAB_CHANGE ? LV_ANIM_ON : LV_ANIM_OFF);
+}
+
 // -- construction --------------------------------------------------------
+
+/// A square, icon-only button for the status bar strip. Deliberately smaller
+/// than makeButton()'s tap target -- lv_obj_set_ext_click_area() below grows
+/// the touchable area back to a fingertip without growing the drawn box.
+lv_obj_t *makeIconButton(lv_obj_t *parent, const char *symbol, lv_event_cb_t handler)
+{
+    const int32_t side = s_small_screen ? GB_STATUS_BUTTON_SIZE_SMALL
+                                        : GB_STATUS_BUTTON_SIZE_LARGE;
+    lv_obj_t *button = lv_button_create(parent);
+    lv_obj_add_event_cb(button, handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_size(button, side, side);
+    lv_obj_set_style_pad_all(button, 0, 0);
+    lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_shadow_width(button, 0, 0);
+    lv_obj_set_ext_click_area(button, GB_STATUS_BUTTON_EXT_CLICK);
+
+    lv_obj_t *label = lv_label_create(button);
+    lv_obj_set_style_text_font(label, fontSmall(), 0);
+    lv_label_set_text(label, symbol);
+    lv_obj_center(label);
+
+    return button;
+}
+
+struct GbGridEntry {
+    const char *icon;
+    const char *name;
+    uint32_t    tab;         ///< page in s_tabview the tile opens, or GB_TAB_NONE
+    void      (*open)(void); ///< non-NULL instead of a tab: run this
+};
+
+/// Not a page in s_tabview. Settings is a screen of its own -- deliberately
+/// outside the swipe chain, so the user cannot land on it by swiping past
+/// Music -- so its tile carries an action rather than an index.
+constexpr uint32_t GB_TAB_NONE = UINT32_MAX;
+
+const GbGridEntry GB_GRID_ENTRIES[] = {
+    {LV_SYMBOL_HOME,     "Watch",    GB_TAB_WATCH,  nullptr},
+    {LV_SYMBOL_ENVELOPE, "Chats",    GB_TAB_CHATS,  nullptr},
+    {LV_SYMBOL_BELL,     "Alerts",   GB_TAB_ALERTS, nullptr},
+    {LV_SYMBOL_AUDIO,    "Music",    GB_TAB_MUSIC,  nullptr},
+    {LV_SYMBOL_SETTINGS, "Settings", GB_TAB_NONE,   settings_screen_open},
+};
+
+/// Page 0: one large tile per page, laid out on an LVGL grid so the tiles
+/// divide whatever the panel gives them evenly at any screen size.
+void buildGridTab(lv_obj_t *tab)
+{
+    const uint32_t count = sizeof(GB_GRID_ENTRIES) / sizeof(GB_GRID_ENTRIES[0]);
+    static_assert(count <= GB_GRID_COLS * GB_GRID_ROWS,
+                  "more grid entries than cells -- widen GB_GRID_ROWS/COLS");
+
+    static int32_t cols[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+    static int32_t rows[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+
+    lv_obj_set_grid_dsc_array(tab, cols, rows);
+    lv_obj_set_style_pad_all(tab, GB_GRID_PAD, 0);
+    lv_obj_set_style_pad_row(tab, GB_GRID_GAP, 0);      // LVGL 9.2 has no pad_gap;
+    lv_obj_set_style_pad_column(tab, GB_GRID_GAP, 0);   // the grid reads row/column
+
+    for (uint32_t i = 0; i < count; i++) {
+        lv_obj_t *tile = lv_button_create(tab);
+        lv_obj_set_grid_cell(tile, LV_GRID_ALIGN_STRETCH, i % GB_GRID_COLS, 1,
+                             LV_GRID_ALIGN_STRETCH, i / GB_GRID_COLS, 1);
+        // The theme's button shadow on four full-size tiles is real blend work
+        // on every frame of a swipe; the tile's own background is enough edge.
+        lv_obj_set_style_shadow_width(tile, 0, 0);
+        lv_obj_set_flex_flow(tile, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(tile, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_row(tile, s_small_screen ? 2 : 6, 0);
+        lv_obj_add_event_cb(tile, gridTileClicked, LV_EVENT_CLICKED,
+                            (void *)&GB_GRID_ENTRIES[i]);
+
+        makeLabel(tile, fontHuge(), lv_color_white(), GB_GRID_ENTRIES[i].icon);
+        makeLabel(tile, fontBody(), lv_color_white(), GB_GRID_ENTRIES[i].name);
+    }
+}
 
 void buildStatusBar(lv_obj_t *parent)
 {
     lv_obj_t *bar = lv_obj_create(parent);
     lv_obj_remove_style_all(bar);
-    lv_obj_set_size(bar, LV_PCT(100), s_small_screen ? 20 : 30);
+    lv_obj_set_size(bar, LV_PCT(100), s_small_screen ? GB_STATUS_BAR_HEIGHT_SMALL
+                                                     : GB_STATUS_BAR_HEIGHT_LARGE);
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_hor(bar, 8, 0);
+
+    // LV_SYMBOL_LIST, not LV_SYMBOL_HOME: the grid's Watch tile already uses
+    // HOME and the two would read as the same destination.
+    s_home_button = makeIconButton(bar, LV_SYMBOL_LIST, homeClicked);
 
     s_link_label = makeLabel(bar, fontSmall(), lv_palette_main(LV_PALETTE_GREY),
                              LV_SYMBOL_BLUETOOTH " Advertising");
@@ -968,16 +1152,28 @@ void gb_ui_begin(lv_obj_t *screen)
 
     buildStatusBar(screen);
 
-    lv_obj_t *tabview = lv_tabview_create(screen);
-    lv_tabview_set_tab_bar_position(tabview, LV_DIR_BOTTOM);
-    lv_tabview_set_tab_bar_size(tabview, s_small_screen ? GB_TAB_BAR_HEIGHT_SMALL : GB_TAB_BAR_HEIGHT_LARGE);
-    lv_obj_set_width(tabview, LV_PCT(100));
-    lv_obj_set_flex_grow(tabview, 1);
+    // The tab bar is replaced by the launcher grid on page 0 plus the status
+    // bar's home button, which reclaims its 48px (34 on the S3) for the lists.
+    // Both calls: the size zeroes the strip, the HIDDEN flag makes the
+    // tabview's own flex layout skip it so no theme padding survives as a
+    // sliver. Swiping between pages is the content container's scroll snap and
+    // is unaffected by either.
+    s_tabview = lv_tabview_create(screen);
+    lv_tabview_set_tab_bar_position(s_tabview, LV_DIR_BOTTOM);
+    lv_tabview_set_tab_bar_size(s_tabview, 0);
+    lv_obj_add_flag(lv_tabview_get_tab_bar(s_tabview), LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_width(s_tabview, LV_PCT(100));
+    lv_obj_set_flex_grow(s_tabview, 1);
 
-    buildWatchTab(lv_tabview_add_tab(tabview, "Watch"));
-    buildChatsTab(lv_tabview_add_tab(tabview, "Chats"));
-    buildAlertsTab(lv_tabview_add_tab(tabview, "Alerts"));
-    buildMusicTab(lv_tabview_add_tab(tabview, "Music"));
+    buildGridTab(lv_tabview_add_tab(s_tabview, "Home"));
+    buildWatchTab(lv_tabview_add_tab(s_tabview, "Watch"));
+    buildChatsTab(lv_tabview_add_tab(s_tabview, "Chats"));
+    buildAlertsTab(lv_tabview_add_tab(s_tabview, "Alerts"));
+    buildMusicTab(lv_tabview_add_tab(s_tabview, "Music"));
+
+    lv_obj_add_event_cb(s_tabview, tabChanged, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_tabview_set_active(s_tabview, GB_TAB_GRID, LV_ANIM_OFF);
+    refreshHomeButton();
 
     refreshClock();
     refreshStatusBar();
@@ -986,6 +1182,14 @@ void gb_ui_begin(lv_obj_t *screen)
     refreshMusic();
 
     lv_timer_create(tick, 1000, NULL);
+}
+
+void gb_ui_show_home(void)
+{
+    if (!s_tabview) {
+        return;
+    }
+    showTab(GB_TAB_GRID, LV_ANIM_OFF);
 }
 
 void gb_ui_on_state_changed(GbStateChange change)

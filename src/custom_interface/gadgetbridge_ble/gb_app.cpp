@@ -6,6 +6,7 @@
 #include "gb_app.h"
 
 #include "gb_link.h"
+#include "../settings/app_settings.h"
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -25,6 +26,28 @@ constexpr uint32_t GB_BATTERY_INTERVAL_MS = 30000;
 
 /// Gap between buzzes while ringing for a call, an alarm, or "find device".
 constexpr uint32_t GB_BUZZ_INTERVAL_MS = 1500;
+
+/**
+ * The one place notification haptics are gated by the user's setting.
+ *
+ * Every buzz this app raises on its own is one of two classes -- a tap for an
+ * arriving message or notification, a longer alert for a call, an alarm or
+ * "find device" -- and each class has its own switch on the settings page.
+ * Routing all of them through here keeps that an `if` in one function rather
+ * than at six call sites, where the next one added would quietly miss it.
+ *
+ * GbApp::onVibrate() deliberately does *not* come through here: that is the
+ * phone explicitly asking the watch to buzz (§5), not a notification the watch
+ * decided to raise, so a notification preference has no say over it.
+ */
+void vibrateFor(GbHaptic effect)
+{
+    const bool allowed = (effect == GB_HAPTIC_TAP) ? app_settings().vibrate_messages != 0
+                                                   : app_settings().vibrate_alerts != 0;
+    if (allowed) {
+        gb_platform::vibrate(effect);
+    }
+}
 
 } // namespace
 
@@ -149,7 +172,7 @@ void GbApp::pollAlarms()
         GB_LOG("[gb] alarm %02u:%02u\n", alarm.hour, alarm.minute);
         m_fired_alarm = alarm;
         m_alarm_fired = true;
-        gb_platform::vibrate(GB_HAPTIC_ALERT);
+        vibrateFor(GB_HAPTIC_ALERT);
         m_last_buzz_ms = gb_platform::uptimeMs();
         notify(GB_CHANGE_ALARM_FIRED);
         break;
@@ -168,7 +191,7 @@ void GbApp::pollBuzzers()
         return;
     }
     m_last_buzz_ms = now;
-    gb_platform::vibrate(GB_HAPTIC_ALERT);
+    vibrateFor(GB_HAPTIC_ALERT);
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +218,7 @@ void GbApp::onNotify(const GbNotification &notification)
     // goes to the conversation store instead of the notification list -- the
     // two views never show the same thing twice.
     if (m_messages.ingest(notification, currentEpoch())) {
-        gb_platform::vibrate(GB_HAPTIC_TAP);
+        vibrateFor(GB_HAPTIC_TAP);
         notify(GB_CHANGE_MESSAGES);
         return;
     }
@@ -209,7 +232,7 @@ void GbApp::onNotify(const GbNotification &notification)
         m_notifications.pop_back();
     }
 
-    gb_platform::vibrate(GB_HAPTIC_TAP);
+    vibrateFor(GB_HAPTIC_TAP);
     notify(GB_CHANGE_NOTIFICATIONS);
 }
 
@@ -230,7 +253,7 @@ void GbApp::onCall(const GbCall &call)
     if (call.cmd == "incoming") {
         m_call_active = true;
         m_call_ringing = true;
-        gb_platform::vibrate(GB_HAPTIC_ALERT);
+        vibrateFor(GB_HAPTIC_ALERT);
         m_last_buzz_ms = gb_platform::uptimeMs();
     } else if (call.cmd == "outgoing" || call.cmd == "start") {
         m_call_active = true;
@@ -273,7 +296,7 @@ void GbApp::onFind(bool on)
 {
     m_find_active = on;
     if (on) {
-        gb_platform::vibrate(GB_HAPTIC_ALERT);
+        vibrateFor(GB_HAPTIC_ALERT);
         m_last_buzz_ms = gb_platform::uptimeMs();
     }
     notify(GB_CHANGE_FIND);

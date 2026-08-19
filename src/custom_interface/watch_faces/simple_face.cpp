@@ -26,6 +26,11 @@
 #include <time.h>
 #endif
 
+/// The face's own root inside the screen, so *_deinit() can delete the whole
+/// face by deleting one object rather than tracking every widget on it.
+static lv_obj_t *face_root;
+static lv_timer_t *face_timer;
+
 static lv_obj_t *label_time;
 static lv_obj_t *label_date;
 static lv_obj_t *label_batt;
@@ -43,6 +48,7 @@ static void build_face(lv_obj_t *screen)
     // build the face inside the largest rect that's safe everywhere under
     // the curved bezel rather than against the screen's raw bounds.
     lv_obj_t *scr = usable_area_rect(screen);
+    face_root = scr;
 
     // Column layout with the clock centred and the battery row pinned bottom.
     lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
@@ -132,7 +138,25 @@ void simple_face_init(lv_obj_t *screen)
 {
     build_face(screen);
 
-    // One timer at 1 Hz is enough -- the display only shows minutes.
-    lv_timer_t *timer = lv_timer_create(refresh, 1000, NULL);
-    lv_timer_ready(timer);      // paint immediately rather than after 1s
+    // One timer at 1 Hz is enough -- the display only shows minutes. Kept in
+    // a static so simple_face_deinit() can stop it; a face that is torn down
+    // and rebuilt would otherwise accumulate one timer per switch, each still
+    // writing to labels that no longer exist.
+    face_timer = lv_timer_create(refresh, 1000, NULL);
+    lv_timer_ready(face_timer); // paint immediately rather than after 1s
+}
+
+void simple_face_deinit(void)
+{
+    // Timer first: deleting the widgets while it is still armed leaves one
+    // tick able to run against freed labels.
+    if (face_timer) {
+        lv_timer_delete(face_timer);
+        face_timer = NULL;
+    }
+    if (face_root) {
+        lv_obj_delete(face_root);
+        face_root = NULL;
+    }
+    label_time = label_date = label_batt = bar_batt = NULL;
 }
