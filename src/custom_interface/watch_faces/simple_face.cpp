@@ -67,7 +67,7 @@ static void build_face(lv_obj_t *screen)
       margin above and below or the enlarged render crowds label_date beneath
       it. Pivots around the label's own center by default, which flex already
       horizontally centers, so no extra alignment is needed.*/
-    lv_obj_set_style_transform_scale(label_time, APP_FACE_TIME_SCALE * LV_SCALE_NONE, 0);
+    //lv_obj_set_style_transform_scale(label_time, APP_FACE_TIME_SCALE * LV_SCALE_NONE, 0);
     lv_obj_set_style_margin_top(label_time, APP_FACE_TIME_MARGIN, 0);
     lv_obj_set_style_margin_bottom(label_time, APP_FACE_TIME_MARGIN, 0);
 

@@ -119,9 +119,9 @@ constexpr bool     APP_LORA_ENABLED_DEFAULT  = false;   ///< fail-closed
 // ---------------------------------------------------------------------------
 // Fonts -- simple watch face
 // ---------------------------------------------------------------------------
-/// 48 px is the largest font LVGL ships, so the clock cannot get bigger this
-/// way -- the face scales the *label* instead (APP_FACE_TIME_SCALE).
-#define APP_FONT_FACE_TIME   &lv_font_montserrat_48
+//extern lv_font_t font_clock_120;
+//#define APP_FONT_FACE_TIME &font_clock_120
+//#define APP_FONT_FACE_TIME   &lv_font_montserrat_48
 #define APP_FONT_FACE_DATE   &lv_font_montserrat_20
 #define APP_FONT_FACE_BATT   &lv_font_montserrat_16
 
@@ -266,7 +266,7 @@ constexpr size_t APP_GB_CHAT_PREVIEW_CHARS  = 44;
 constexpr int32_t APP_QST_TRAY_HEIGHT       = 230;
 constexpr int32_t APP_QST_HEADER_HEIGHT     = 110;  ///< clock + battery
 constexpr int32_t APP_QST_BRIGHTNESS_HEIGHT = 70;   ///< icon + slider + readout
-constexpr int32_t APP_QST_FOOTER_HEIGHT     = 50;   ///< grabber + gear
+constexpr int32_t APP_QST_FOOTER_HEIGHT     = 70;   ///< grabber + gear
 
 /// The battery meter under the charge icon.
 constexpr int32_t APP_QST_BATT_BAR_WIDTH  = 80;

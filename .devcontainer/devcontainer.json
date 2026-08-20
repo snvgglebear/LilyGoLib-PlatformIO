@@ -8,7 +8,8 @@
             "extensions": [
                 "platformio.platformio-ide",
                 "ms-vscode.cpptools",
-                "anthropic.claude-code"
+                "anthropic.claude-code",
+                "ms-vscode.copilot"
             ],
             "settings": {
                 // Let the extension install and manage its own PlatformIO
