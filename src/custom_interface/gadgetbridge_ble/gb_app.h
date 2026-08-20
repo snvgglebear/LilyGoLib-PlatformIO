@@ -42,6 +42,7 @@ enum GbStateChange {
     GB_CHANGE_ALARMS,           ///< the alarm set was replaced
     GB_CHANGE_FIND,             ///< phone started/stopped "find device"
     GB_CHANGE_ALARM_FIRED,      ///< an alarm just went off
+    GB_CHANGE_SETTINGS,         ///< a phone-driven settings update (§5.14) was applied
 };
 
 class GbApp : public GbProtocolHandler
@@ -165,6 +166,13 @@ public:
     /// Show a toast on the phone (§6.7): level is "info", "warn" or "error".
     void toast(const char *level, const std::string &message);
 
+    /// Call after applying a settings change that did *not* come from the
+    /// phone -- i.e. from custom_interface's own settings screen -- so the
+    /// next §6.8 echo reflects it too. Debounced the same way a phone-driven
+    /// change is (see onSettings()); the settings screen can call this once
+    /// per control per edit without worrying about flooding the link or NVS.
+    void reportSettingsChanged();
+
 protected:
     // GbProtocolHandler -- decoded phone -> watch messages.
     void onVersionRequest() override;
@@ -178,6 +186,7 @@ protected:
     void onWeather(const GbWeather &weather) override;
     void onFind(bool on) override;
     void onVibrate(int32_t intensity) override;
+    void onSettings(const GbSettings &settings) override;
     void onUnknown(const std::string &type) override;
 
 private:
@@ -188,7 +197,13 @@ private:
     void pollBattery(bool force);
     void pollAlarms();
     void pollBuzzers();
+    void pollSettingsSync();
     void removeNotification(int32_t id);
+
+    /// §6.8: send the full effective settings state. @p force bypasses the
+    /// debounce (used at connect); otherwise a no-op unless something changed
+    /// at least GB_SETTINGS_DEBOUNCE_MS ago.
+    void sendSettingsEcho(bool force);
 
     Listener m_listener = nullptr;
 
@@ -217,6 +232,9 @@ private:
     uint32_t m_last_battery_ms = 0;
     int m_reported_percent = -1;
     bool m_reported_charging = false;
+
+    bool m_settings_echo_pending = false;   ///< something changed since the last echo/flush
+    uint32_t m_last_settings_change_ms = 0;
 };
 
 /// The one instance, shared by the entry point and the UI.

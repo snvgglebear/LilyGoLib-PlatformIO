@@ -6,7 +6,9 @@
 #include "gb_app.h"
 
 #include "gb_link.h"
+#include "../app_config.h"
 #include "../settings/app_settings.h"
+#include "../watch_faces/face_registry.h"
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -26,6 +28,12 @@ constexpr uint32_t GB_BATTERY_INTERVAL_MS = 30000;
 
 /// Gap between buzzes while ringing for a call, an alarm, or "find device".
 constexpr uint32_t GB_BUZZ_INTERVAL_MS = 1500;
+
+/// How long a settings change (from either origin) waits for more before the
+/// §6.8 echo goes out and NVS is written. Coalesces a slider drag's burst of
+/// `settings` messages -- or a run of quick taps on the settings screen --
+/// into one write and one echo instead of one per message.
+constexpr uint32_t GB_SETTINGS_DEBOUNCE_MS = 500;
 
 /**
  * The one place notification haptics are gated by the user's setting.
@@ -92,6 +100,7 @@ void GbApp::poll()
     pollBattery(false);
     pollAlarms();
     pollBuzzers();
+    pollSettingsSync();
 }
 
 void GbApp::onConnected()
@@ -99,6 +108,9 @@ void GbApp::onConnected()
     GB_LOG("[gb] phone connected\n");
     // §6.2 says send status on connect; the phone has nothing until we do.
     pollBattery(true);
+    // §6.8: same idea for settings -- a freshly (re)connected phone should
+    // see real values immediately, not just after the first later change.
+    sendSettingsEcho(true);
 }
 
 void GbApp::onDisconnected()
@@ -192,6 +204,11 @@ void GbApp::pollBuzzers()
     }
     m_last_buzz_ms = now;
     vibrateFor(GB_HAPTIC_ALERT);
+}
+
+void GbApp::pollSettingsSync()
+{
+    sendSettingsEcho(false);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +327,48 @@ void GbApp::onVibrate(int32_t intensity)
     // The DRV2605 plays fixed waveforms rather than taking a level, so the
     // intensity only picks between a tap and a buzz.
     gb_platform::vibrate(intensity >= 50 ? GB_HAPTIC_ALERT : GB_HAPTIC_TAP);
+}
+
+void GbApp::onSettings(const GbSettings &settings)
+{
+    // §5.14: a partial update -- only touch what the phone actually sent --
+    // and clamp rather than reject an out-of-range value.
+    bool changed = false;
+
+    if (settings.has_notif_timeout_ms) {
+        int32_t ms = settings.notif_timeout_ms;
+        if (ms < APP_NOTIF_POPUP_MIN_MS) {
+            ms = APP_NOTIF_POPUP_MIN_MS;
+        } else if (ms > APP_NOTIF_POPUP_MAX_MS) {
+            ms = APP_NOTIF_POPUP_MAX_MS;
+        }
+        app_settings_set_notif_popup_ms(static_cast<uint16_t>(ms));
+        changed = true;
+    }
+    if (settings.has_notif_vibrate) {
+        // §5.14's `notif_vibrate` is "vibrate on notification arrival" --
+        // GB_HAPTIC_TAP's class, i.e. vibrate_messages. It does not touch
+        // vibrate_alerts (calls, alarms, find-device), which has no
+        // equivalent field in this message.
+        app_settings_set_vibrate_messages(settings.notif_vibrate);
+        changed = true;
+    }
+    if (settings.has_clock_mode) {
+        if (settings.clock_mode == "digital") {
+            app_settings_set_watch_face(WATCH_FACE_DIGITAL);
+            changed = true;
+        } else if (settings.clock_mode == "analog") {
+            app_settings_set_watch_face(WATCH_FACE_ANALOG);
+            changed = true;
+        }
+        // Any other value: ignored, per §5.14 -- only this field, not the
+        // rest of the message.
+    }
+
+    if (changed) {
+        reportSettingsChanged();
+        notify(GB_CHANGE_SETTINGS);
+    }
 }
 
 void GbApp::onUnknown(const std::string &type)
@@ -457,4 +516,30 @@ void GbApp::acknowledgeAlarm()
 void GbApp::toast(const char *level, const std::string &message)
 {
     gb_link_send(gb_msg_toast(level, message));
+}
+
+void GbApp::reportSettingsChanged()
+{
+    m_settings_echo_pending = true;
+    m_last_settings_change_ms = gb_platform::uptimeMs();
+}
+
+void GbApp::sendSettingsEcho(bool force)
+{
+    if (!force) {
+        if (!m_settings_echo_pending ||
+                (gb_platform::uptimeMs() - m_last_settings_change_ms) < GB_SETTINGS_DEBOUNCE_MS) {
+            return;
+        }
+    }
+    m_settings_echo_pending = false;
+    app_settings_flush();           // no-op if nothing was actually dirty
+
+    if (!m_connected) {
+        return;                     // nothing to echo it to; the next connect forces one
+    }
+    const AppSettings &s = app_settings();
+    gb_link_send(gb_msg_settings(s.notif_popup_ms, s.vibrate_messages != 0,
+                                 static_cast<WatchFaceId>(s.watch_face) == WATCH_FACE_ANALOG
+                                 ? "analog" : "digital"));
 }

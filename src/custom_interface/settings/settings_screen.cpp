@@ -21,6 +21,7 @@
 #include "settings_widgets.h"
 
 #include "../app_config.h"
+#include "../gadgetbridge_ble/gb_app.h"
 #include "../gadgetbridge_ble/gb_link.h"
 #include "../gadgetbridge_ble/gb_platform.h"
 #include "../quick_settings_tray/quick_settings_tray.h"
@@ -31,6 +32,10 @@
 #include <usable_area.h>
 
 #include <stdio.h>
+
+#ifdef ARDUINO
+#include <Arduino.h>   // ESP.getFreeHeap(), for the System Info page
+#endif
 
 namespace
 {
@@ -113,6 +118,7 @@ void popupDurationChanged(lv_event_t *e)
     lv_obj_t *slider = (lv_obj_t *)lv_event_get_target(e);
     const uint16_t ms = (uint16_t)lv_slider_get_value(slider);
     app_settings_set_notif_popup_ms(ms);
+    gb_app.reportSettingsChanged();   // §6.8: phone's settings screen should track this too
 
     lv_obj_t *label = (lv_obj_t *)lv_event_get_user_data(e);
     lv_label_set_text_fmt(label, "Popup duration: %u.%u s", ms / 1000u, (ms % 1000u) / 100u);
@@ -131,11 +137,13 @@ void wristWakeChanged(lv_event_t *e)
 void analogFaceChanged(lv_event_t *e)
 {
     app_settings_set_watch_face(switchIsOn(e) ? WATCH_FACE_ANALOG : WATCH_FACE_DIGITAL);
+    gb_app.reportSettingsChanged();   // §6.8: `clock_mode` echo
 }
 
 void vibrateMessagesChanged(lv_event_t *e)
 {
     app_settings_set_vibrate_messages(switchIsOn(e));
+    gb_app.reportSettingsChanged();   // §6.8: `notif_vibrate` echo
 }
 
 void vibrateAlertsChanged(lv_event_t *e)
@@ -149,6 +157,7 @@ void restoreConfirmed(lv_event_t *e)
 {
     lv_msgbox_close(lv_obj_get_parent(lv_obj_get_parent((lv_obj_t *)lv_event_get_current_target(e))));
     app_settings_restore_defaults();
+    gb_app.reportSettingsChanged();   // §6.8: defaults touch all three echoed fields
     buildMenu();    // the old rows are showing the old values
 }
 

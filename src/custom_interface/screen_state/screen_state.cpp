@@ -15,6 +15,11 @@ void screen_state_set_wake_cb(ScreenWakeCallback cb)
     wake_cb = cb;
 }
 
+/*Resets the idle countdown. millis() on hardware, the host monotonic clock
+  natively, so each branch below defines it -- forward declared here because
+  screen_state_set_timeout_ms() below calls it.*/
+static void noteActivity(void);
+
 void screen_state_set_timeout_ms(uint32_t ms)
 {
     sleep_timeout_ms = ms;
@@ -50,11 +55,6 @@ static bool idleExpired(uint32_t now_ms)
 {
     return sleep_timeout_ms != 0 && (now_ms - last_activity_ms) >= sleep_timeout_ms;
 }
-
-/*Resets the idle countdown. millis() on hardware, the host monotonic clock
-  natively, so each branch below defines it -- forward declared here because
-  screen_state_set_timeout_ms() above calls it.*/
-static void noteActivity(void);
 
 /// Flips screen_asleep and fires wake_cb, but only on an actual
 /// asleep->awake edge -- safe to call from anywhere that just turned the

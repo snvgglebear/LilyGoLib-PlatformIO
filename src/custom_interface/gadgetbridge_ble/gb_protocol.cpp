@@ -190,6 +190,22 @@ bool gb_protocol_dispatch(const std::string &line, GbProtocolHandler &handler)
     } else if (t == "vibrate") {
         handler.onVibrate(doc["n"] | 0);
 
+    } else if (t == "settings") {
+        GbSettings settings;
+        if (doc["notif_timeout_ms"].is<int32_t>()) {
+            settings.has_notif_timeout_ms = true;
+            settings.notif_timeout_ms = doc["notif_timeout_ms"];
+        }
+        if (doc["notif_vibrate"].is<bool>()) {
+            settings.has_notif_vibrate = true;
+            settings.notif_vibrate = doc["notif_vibrate"];
+        }
+        if (doc["clock_mode"].is<const char *>()) {
+            settings.has_clock_mode = true;
+            settings.clock_mode = str_of(doc["clock_mode"]);
+        }
+        handler.onSettings(settings);
+
     } else {
         handler.onUnknown(t);
     }
@@ -289,5 +305,16 @@ std::string gb_msg_toast(const char *level, const std::string &message)
     JsonDocument doc;
     doc["t"] = level;
     doc["msg"] = message;
+    return serialize(doc);
+}
+
+std::string gb_msg_settings(int32_t notif_timeout_ms, bool notif_vibrate,
+                            const std::string &clock_mode)
+{
+    JsonDocument doc;
+    doc["t"] = "settings";
+    doc["notif_timeout_ms"] = notif_timeout_ms;
+    doc["notif_vibrate"] = notif_vibrate;
+    doc["clock_mode"] = clock_mode;
     return serialize(doc);
 }

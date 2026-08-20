@@ -957,6 +957,18 @@ void homeClicked(lv_event_t *event)
     showTab(GB_TAB_GRID, LV_ANIM_ON);
 }
 
+struct GbGridEntry {
+    const char *icon;
+    const char *name;
+    uint32_t    tab;         ///< page in s_tabview the tile opens, or GB_TAB_NONE
+    void      (*open)(void); ///< non-NULL instead of a tab: run this
+};
+
+/// Not a page in s_tabview. Settings is a screen of its own -- deliberately
+/// outside the swipe chain, so the user cannot land on it by swiping past
+/// Music -- so its tile carries an action rather than an index.
+constexpr uint32_t GB_TAB_NONE = UINT32_MAX;
+
 void gridTileClicked(lv_event_t *event)
 {
     const GbGridEntry *entry = (const GbGridEntry *)lv_event_get_user_data(event);
@@ -991,18 +1003,6 @@ lv_obj_t *makeIconButton(lv_obj_t *parent, const char *symbol, lv_event_cb_t han
 
     return button;
 }
-
-struct GbGridEntry {
-    const char *icon;
-    const char *name;
-    uint32_t    tab;         ///< page in s_tabview the tile opens, or GB_TAB_NONE
-    void      (*open)(void); ///< non-NULL instead of a tab: run this
-};
-
-/// Not a page in s_tabview. Settings is a screen of its own -- deliberately
-/// outside the swipe chain, so the user cannot land on it by swiping past
-/// Music -- so its tile carries an action rather than an index.
-constexpr uint32_t GB_TAB_NONE = UINT32_MAX;
 
 const GbGridEntry GB_GRID_ENTRIES[] = {
     {LV_SYMBOL_HOME,     "Watch",    GB_TAB_WATCH,  nullptr},
@@ -1223,6 +1223,11 @@ void gb_ui_on_state_changed(GbStateChange change)
         break;
     case GB_CHANGE_ALARM_FIRED:
         refreshFiredAlarm();
+        break;
+    case GB_CHANGE_SETTINGS:
+        // Nothing to refresh here: the settings screen (settings/settings_screen.cpp)
+        // is a separate screen that rereads app_settings() fresh every time it
+        // opens, rather than listening for this notification.
         break;
     }
 }

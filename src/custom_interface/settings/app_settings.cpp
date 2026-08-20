@@ -17,6 +17,18 @@
 
 #include <string.h>
 
+// <Preferences.h> (and, transitively, half of the Arduino core) must be
+// included here, at file scope, not down in the `#ifdef ARDUINO` block below:
+// that block sits inside the anonymous namespace, and a header included while
+// lexically inside an unnamed namespace gets any `namespace std { ... }` it
+// opens nested inside that unnamed namespace too, as a distinct namespace from
+// the real ::std. Arduino.h's `using std::abs;` then fails to resolve on the
+// xtensa-esp32s3 toolchain, and every std:: symbol Preferences.h's own
+// includes expect already exists follows it into the same wall of errors.
+#ifdef ARDUINO
+#include <Preferences.h>
+#endif
+
 namespace
 {
 
@@ -63,8 +75,6 @@ void applyAll()
 // -- storage --------------------------------------------------------------
 
 #ifdef ARDUINO
-
-#include <Preferences.h>
 
 constexpr const char *NVS_NAMESPACE = "custom_iface";
 constexpr const char *NVS_KEY       = "settings";

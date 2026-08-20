@@ -92,6 +92,29 @@ struct GbWeather {
 };
 
 /**
+ * §5.14 `settings` — partial update to the watch's own settings. Every field
+ * is independently optional; the has_* flags say which ones the phone
+ * actually sent, so a partial update only touches what changed.
+ *
+ * The wire spec (.claude/twatch-ultra-ble-protocol.md §5.14/§6.8) also has
+ * `pinned_mask` and `low_batt_pct`, for a pinned-apps set and a low-battery
+ * warning threshold. Neither exists as a watch setting in this app yet, so
+ * this struct -- and the dispatcher and the echo builder below -- do not
+ * carry them; per §10 ("both sides ignore what they do not recognise") a
+ * phone that sends them today simply gets no effect, not an error.
+ */
+struct GbSettings {
+    bool has_notif_timeout_ms = false;
+    int32_t notif_timeout_ms = 0;   ///< ms; handler clamps to the app's popup-duration range
+
+    bool has_notif_vibrate = false;
+    bool notif_vibrate = false;     ///< vibrate on notification arrival (messages, not calls/alarms)
+
+    bool has_clock_mode = false;
+    std::string clock_mode;         ///< "digital" | "analog"; unrecognised values are ignored
+};
+
+/**
  * Sink for decoded phone -> watch messages.
  *
  * Every hook has an empty default: a firmware only overrides what it actually
@@ -114,6 +137,7 @@ public:
     virtual void onWeather(const GbWeather &) {}                ///< §5.9 `weather`
     virtual void onFind(bool on) { (void)on; }                  ///< §5.10 `find`
     virtual void onVibrate(int32_t intensity) { (void)intensity; }  ///< §5.11 `vibrate`
+    virtual void onSettings(const GbSettings &) {}               ///< §5.14 `settings`
 
     /// An `t` value this firmware does not implement. Logged and dropped.
     virtual void onUnknown(const std::string &type) { (void)type; }
@@ -202,3 +226,10 @@ std::string gb_msg_notify_reply(int32_t id, const std::string &tel, const std::s
 
 /// §6.7 toast on the phone. @p level is "info", "warn" or "error".
 std::string gb_msg_toast(const char *level, const std::string &message);
+
+/// §6.8 `settings` echo -- always the full effective state (never partial),
+/// so one message is enough for the phone to repaint its settings screen
+/// regardless of which side a change came from. @p clock_mode is "digital" or
+/// "analog". See GbSettings for why `pinned_mask`/`low_batt_pct` aren't here.
+std::string gb_msg_settings(int32_t notif_timeout_ms, bool notif_vibrate,
+                            const std::string &clock_mode);
