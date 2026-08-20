@@ -204,6 +204,21 @@ bool gb_protocol_dispatch(const std::string &line, GbProtocolHandler &handler)
             settings.has_clock_mode = true;
             settings.clock_mode = str_of(doc["clock_mode"]);
         }
+        // Gadgetbridge sends pinned_mask as a Java int (signed 32-bit), so
+        // .is<int32_t>() is what matches on the wire even though the stored
+        // value is a bitmask.
+        if (doc["pinned_mask"].is<int32_t>()) {
+            settings.has_pinned_mask = true;
+            settings.pinned_mask = doc["pinned_mask"].as<uint32_t>();
+        }
+        if (doc["low_batt_pct"].is<int32_t>()) {
+            settings.has_low_batt_pct = true;
+            settings.low_batt_pct = doc["low_batt_pct"];
+        }
+        if (doc["lora_enabled"].is<bool>()) {
+            settings.has_lora_enabled = true;
+            settings.lora_enabled = doc["lora_enabled"];
+        }
         handler.onSettings(settings);
 
     } else {
@@ -309,12 +324,20 @@ std::string gb_msg_toast(const char *level, const std::string &message)
 }
 
 std::string gb_msg_settings(int32_t notif_timeout_ms, bool notif_vibrate,
-                            const std::string &clock_mode)
+                            const std::string &clock_mode,
+                            uint32_t pinned_mask, int32_t low_batt_pct,
+                            bool lora_enabled)
 {
     JsonDocument doc;
     doc["t"] = "settings";
     doc["notif_timeout_ms"] = notif_timeout_ms;
     doc["notif_vibrate"] = notif_vibrate;
     doc["clock_mode"] = clock_mode;
+    // Emit pinned_mask as int32 for symmetry with the wire's signed shape;
+    // its stored form is a uint32_t bitmask and Gadgetbridge reads it as a
+    // signed int either way.
+    doc["pinned_mask"] = static_cast<int32_t>(pinned_mask);
+    doc["low_batt_pct"] = low_batt_pct;
+    doc["lora_enabled"] = lora_enabled;
     return serialize(doc);
 }

@@ -12,6 +12,7 @@
 #include <lvgl.h>
 
 #include <usable_area.h>
+#include "boot_button/boot_button.h"
 #include "screen_state/screen_state.h"
 #include "gadgetbridge_ble/gb_app.h"
 #include "gadgetbridge_ble/gb_link.h"
@@ -37,6 +38,10 @@ namespace
   without the other's widgets sharing its flex layout.*/
 lv_obj_t *screen_home;
 lv_obj_t *screen_gadgetbridge;
+
+/// How long a screen-to-screen slide takes. One value so the swipes and the
+/// BOOT button move at the same speed in both directions.
+constexpr uint32_t SCREEN_ANIM_MS = 220;
 
 /**
  * True when the drag that produced this gesture is already scrolling
@@ -73,7 +78,7 @@ void onHomeGesture(lv_event_t *e)
     }
     if (lv_indev_get_gesture_dir(indev) == LV_DIR_BOTTOM) {
         gb_ui_show_home();   // always enter the Gadgetbridge screen on its launcher grid
-        lv_screen_load_anim(screen_gadgetbridge, LV_SCR_LOAD_ANIM_MOVE_BOTTOM, 220, 0, false);
+        lv_screen_load_anim(screen_gadgetbridge, LV_SCR_LOAD_ANIM_MOVE_BOTTOM, SCREEN_ANIM_MS, 0, false);
     }
 }
 
@@ -94,9 +99,57 @@ void onGadgetbridgeGesture(lv_event_t *e)
     }
     lv_dir_t dir = lv_indev_get_gesture_dir(indev);
     if (dir == LV_DIR_TOP) {
-        lv_screen_load_anim(screen_home, LV_SCR_LOAD_ANIM_MOVE_TOP, 220, 0, false);
+        lv_screen_load_anim(screen_home, LV_SCR_LOAD_ANIM_MOVE_TOP, SCREEN_ANIM_MS, 0, false);
     } else if (dir == LV_DIR_BOTTOM) {
         quick_settings_tray_open();
+    }
+}
+
+/**
+ * The BOOT button (boot_button.h), as one "home" key:
+ *
+ *   anywhere but the launcher grid  ->  the launcher grid
+ *   on the launcher grid            ->  back out to the watch face
+ *
+ * So a press always moves toward somewhere known, and two presses from any
+ * screen in the app reach the watch face. The watch face itself is "anywhere
+ * but the grid", so a press there opens the grid -- which makes the pair a
+ * toggle once the user is already home, and the shortest path in from the
+ * face.
+ */
+void onBootButton()
+{
+    // A dark screen means the press was aimed at waking the watch. Navigating
+    // on it would move the user somewhere they never saw, and every other wake
+    // source (touch, power button, wrist raise) also only wakes.
+    if (screen_state_is_asleep()) {
+        screen_state_wake_display();
+        return;
+    }
+
+    // The tray floats on lv_layer_top() and would survive the screen load,
+    // hanging over wherever we went -- the same trap quick_settings_tray's own
+    // gear action documents. With it open the press means "put this away".
+    if (quick_settings_tray_is_open()) {
+        quick_settings_tray_close();
+        return;
+    }
+
+    // Already home with nothing layered over it: the only place left to go is
+    // out. Matches the upward swipe, animation included.
+    if (lv_screen_active() == screen_gadgetbridge && gb_ui_at_home()) {
+        lv_screen_load_anim(screen_home, LV_SCR_LOAD_ANIM_MOVE_TOP, SCREEN_ANIM_MS, 0, false);
+        return;
+    }
+
+    /*Unconditional, and before the screen test: from a Gadgetbridge page this
+      is the whole action (reset to the grid, closing any conversation view),
+      and from another screen it makes sure the grid is what comes up rather
+      than the page the user last left behind.*/
+    gb_ui_show_home();
+    if (lv_screen_active() != screen_gadgetbridge) {
+        lv_screen_load_anim(screen_gadgetbridge, LV_SCR_LOAD_ANIM_MOVE_BOTTOM,
+                            SCREEN_ANIM_MS, 0, false);
     }
 }
 
@@ -115,6 +168,7 @@ void setupGui()
     // Initialize the usable area
     usable_area_init();          // styles/clips whichever screen is active now -- that's screen_home
     screen_state_init();
+    boot_button_init();
     quick_settings_tray_init();  // lv_layer_top(), so it overlays every screen below -- needs screen_w/h from usable_area_init()
 
     /*Before the watch face: the store decides which face that is, and it also
@@ -129,6 +183,7 @@ void setupGui()
 
     settings_screen_init();
     quick_settings_tray_set_action(settings_screen_open);   // the tray's gear
+    boot_button_set_action(onBootButton);
 
     screen_gadgetbridge = lv_obj_create(NULL);
     usable_area_style_screen(screen_gadgetbridge);   // usable_area_init() only styled screen_home
@@ -148,5 +203,9 @@ void loopGui()
 {
     lv_timer_handler();
     manageSleepState();
+    /*After manageSleepState(), so a press that arrives on a sleeping screen is
+      tested against the sleep state it actually landed on rather than one this
+      same iteration has already cleared.*/
+    boot_button_poll();
     gb_app.poll();
 }

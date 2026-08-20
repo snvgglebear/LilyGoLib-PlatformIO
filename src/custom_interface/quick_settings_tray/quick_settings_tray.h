@@ -26,6 +26,16 @@ void quick_settings_tray_init(void);
 /// watchface's, which owns swipe-down for its own navigation.
 void quick_settings_tray_open(void);
 
+/// Slide the tray back out. A no-op when it is already closed or closing, so
+/// callers do not need to check first.
+void quick_settings_tray_close(void);
+
+/// True while the tray is open or animating open. The tray sits on
+/// lv_layer_top() and so survives an lv_screen_load(): anything that navigates
+/// in response to a button needs this to decide whether the press means "put
+/// the tray away" rather than "go somewhere else and leave it hanging there".
+bool quick_settings_tray_is_open(void);
+
 /**
  * Wire up the footer's gear button.
  *

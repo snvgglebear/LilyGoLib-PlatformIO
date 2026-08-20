@@ -25,7 +25,7 @@
 
 /// Bumped whenever AppSettings changes shape. A stored blob with a different
 /// version (or a different size) is discarded in favour of the defaults.
-constexpr uint16_t APP_SETTINGS_VERSION = 1;
+constexpr uint16_t APP_SETTINGS_VERSION = 2;    ///< 1 -> 2: added reserved fields for §5.14/§6.8
 
 struct AppSettings {
     uint16_t version;            ///< APP_SETTINGS_VERSION; mismatch -> defaults
@@ -36,6 +36,13 @@ struct AppSettings {
     uint8_t  vibrate_messages;
     uint8_t  vibrate_alerts;
     uint16_t notif_popup_ms;
+
+    /*Phone-synced pass-through: nothing on the watch reads these yet, but they
+      are persisted and echoed so Gadgetbridge's own preferences round-trip
+      instead of vanishing. See plans/settings-sync-delta-plan.md §2.*/
+    uint32_t pinned_mask;        ///< bitmask reserved for a future launcher-pinning feature
+    uint8_t  low_batt_pct;       ///< reserved for a future low-battery warning
+    uint8_t  lora_enabled;       ///< reserved for a future LoRa/Meshtastic feature
 };
 
 /// The live copy. Read it freely; change it only through the setters below,
@@ -63,3 +70,9 @@ void app_settings_set_watch_face(uint8_t face);
 void app_settings_set_notif_popup_ms(uint16_t ms);
 void app_settings_set_vibrate_messages(bool enable);
 void app_settings_set_vibrate_alerts(bool enable);
+
+/*Reserved-field setters: they update the live copy and mark dirty, but push
+  nothing -- no subsystem consumes these values yet.*/
+void app_settings_set_pinned_mask(uint32_t mask);
+void app_settings_set_low_batt_pct(uint8_t pct);
+void app_settings_set_lora_enabled(bool enable);

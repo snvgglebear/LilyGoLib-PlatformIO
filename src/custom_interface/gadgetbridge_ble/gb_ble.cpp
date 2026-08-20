@@ -38,8 +38,8 @@ static const char *GB_NUS_TX      = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";  // 
  *
  *     ^T[-_ ]?Watch[-_ ]?(S3[-_ ]?)?Ultra.*$
  *
- * A T-Watch-S3 running this firmware still has to call itself an Ultra to be
- * recognised, which is why the prefix is not derived from the board.
+ * A literal rather than something derived from the board, so the name the
+ * phone matches on cannot drift with a build flag.
  */
 #ifndef GB_ADVERTISED_NAME_PREFIX
 #define GB_ADVERTISED_NAME_PREFIX "T-Watch Ultra"

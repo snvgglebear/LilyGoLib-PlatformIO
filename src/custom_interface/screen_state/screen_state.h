@@ -41,6 +41,17 @@ void manageSleepState(void);
 typedef void (*ScreenWakeCallback)(void);
 void screen_state_set_wake_cb(ScreenWakeCallback cb);
 
+/*True while the display is powered down, by the idle timeout or the power
+  button. A caller that turns a button press into navigation wants this: acting
+  on the press that woke a dark screen would move the user somewhere they never
+  chose and never saw.*/
+bool screen_state_is_asleep(void);
+
+/*Turn the display back on as if the power button had been pressed -- fires the
+  wake callback and restarts the idle countdown. A no-op while already awake,
+  so a caller can hand it every press and let this sort out which ones matter.*/
+void screen_state_wake_display(void);
+
 /*Idle timeout before the display sleeps, in milliseconds. 0 disables the
   timeout entirely -- the comparison is skipped, not made against 0, so the
   screen stays awake rather than sleeping instantly.

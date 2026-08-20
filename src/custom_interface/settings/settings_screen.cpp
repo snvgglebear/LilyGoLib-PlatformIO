@@ -90,6 +90,30 @@ void stopInfoTimer()
     s_info_battery = s_info_link = s_info_heap = nullptr;
 }
 
+// -- Watch Face page -------------------------------------------------------
+
+lv_obj_t *s_face_analog_sw  = nullptr;
+lv_obj_t *s_face_digital_sw = nullptr;
+lv_obj_t *s_face_current    = nullptr;
+
+/// Every control on the page is a view of the same one value, so they are all
+/// re-driven from watch_face_current() rather than from whichever switch was
+/// touched. lv_obj_set_state() does not send LV_EVENT_VALUE_CHANGED, so
+/// pushing the other switch here cannot re-enter these callbacks.
+void refreshWatchFaceRows()
+{
+    const WatchFaceId id = watch_face_current();
+    if (s_face_analog_sw) {
+        lv_obj_set_state(s_face_analog_sw, LV_STATE_CHECKED, id == WATCH_FACE_ANALOG);
+    }
+    if (s_face_digital_sw) {
+        lv_obj_set_state(s_face_digital_sw, LV_STATE_CHECKED, id == WATCH_FACE_DIGITAL);
+    }
+    if (s_face_current) {
+        lv_label_set_text(s_face_current, watch_face_name(id));
+    }
+}
+
 // -- control callbacks -----------------------------------------------------
 
 void brightnessChanged(lv_event_t *e)
@@ -138,6 +162,14 @@ void analogFaceChanged(lv_event_t *e)
 {
     app_settings_set_watch_face(switchIsOn(e) ? WATCH_FACE_ANALOG : WATCH_FACE_DIGITAL);
     gb_app.reportSettingsChanged();   // §6.8: `clock_mode` echo
+    refreshWatchFaceRows();
+}
+
+void digitalFaceChanged(lv_event_t *e)
+{
+    app_settings_set_watch_face(switchIsOn(e) ? WATCH_FACE_DIGITAL : WATCH_FACE_ANALOG);
+    gb_app.reportSettingsChanged();   // §6.8: `clock_mode` echo
+    refreshWatchFaceRows();
 }
 
 void vibrateMessagesChanged(lv_event_t *e)
@@ -214,10 +246,14 @@ void buildDisplayPage(lv_obj_t *page)
 
 void buildWatchFacePage(lv_obj_t *page)
 {
-    settings_switch(page, LV_SYMBOL_SETTINGS, "Analog face",
-                    watch_face_current() == WATCH_FACE_ANALOG, analogFaceChanged, NULL);
-    settings_value(page, NULL, "Off", watch_face_name(WATCH_FACE_DIGITAL));
-    settings_value(page, NULL, "On", watch_face_name(WATCH_FACE_ANALOG));
+    s_face_analog_sw = settings_switch(page, LV_SYMBOL_SETTINGS, "Analog face",
+                                       watch_face_current() == WATCH_FACE_ANALOG,
+                                       analogFaceChanged, NULL);
+    s_face_digital_sw = settings_switch(page, LV_SYMBOL_SETTINGS, "Digital face",
+                                        watch_face_current() == WATCH_FACE_DIGITAL,
+                                        digitalFaceChanged, NULL);
+    s_face_current = settings_value(page, NULL, "Showing",
+                                    watch_face_name(watch_face_current()));
 }
 
 void buildNotificationsPage(lv_obj_t *page)
@@ -290,6 +326,7 @@ void menuClicked(lv_event_t *e)
 void buildMenu()
 {
     stopInfoTimer();
+    s_face_analog_sw = s_face_digital_sw = s_face_current = nullptr;
     lv_obj_clean(s_screen);
 
     // lv_menu's header (and its back button) sits top-left, the worst place on

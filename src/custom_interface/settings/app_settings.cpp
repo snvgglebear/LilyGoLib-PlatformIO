@@ -54,6 +54,9 @@ void loadDefaults()
     s_settings.vibrate_messages = APP_VIBRATE_MESSAGES_DEFAULT;
     s_settings.vibrate_alerts   = APP_VIBRATE_ALERTS_DEFAULT;
     s_settings.notif_popup_ms   = APP_NOTIF_POPUP_DEFAULT_MS;
+    s_settings.pinned_mask      = APP_PINNED_MASK_DEFAULT;
+    s_settings.low_batt_pct     = APP_LOW_BATT_DEFAULT_PCT;
+    s_settings.lora_enabled     = APP_LORA_ENABLED_DEFAULT;
 }
 
 /**
@@ -228,5 +231,23 @@ void app_settings_set_vibrate_messages(bool enable)
 void app_settings_set_vibrate_alerts(bool enable)
 {
     s_settings.vibrate_alerts = enable;
+    s_dirty = true;
+}
+
+void app_settings_set_pinned_mask(uint32_t mask)
+{
+    s_settings.pinned_mask = mask;   // no subsystem to push to yet
+    s_dirty = true;
+}
+
+void app_settings_set_low_batt_pct(uint8_t pct)
+{
+    s_settings.low_batt_pct = pct;   // no subsystem to push to yet
+    s_dirty = true;
+}
+
+void app_settings_set_lora_enabled(bool enable)
+{
+    s_settings.lora_enabled = enable;   // no subsystem to push to yet
     s_dirty = true;
 }

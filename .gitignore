@@ -1,4 +1,5 @@
 .pio
 .vscode
 build
-*.ino.cpp
+.ino.cpp
+.bin

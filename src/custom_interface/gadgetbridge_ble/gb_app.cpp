@@ -364,6 +364,27 @@ void GbApp::onSettings(const GbSettings &settings)
         // Any other value: ignored, per §5.14 -- only this field, not the
         // rest of the message.
     }
+    // Reserved-field pass-through -- nothing on the watch reads these yet,
+    // but persisting and echoing them keeps Gadgetbridge's own preferences
+    // from vanishing. See plans/settings-sync-delta-plan.md §2.
+    if (settings.has_pinned_mask) {
+        app_settings_set_pinned_mask(settings.pinned_mask);
+        changed = true;
+    }
+    if (settings.has_low_batt_pct) {
+        int32_t pct = settings.low_batt_pct;
+        if (pct < APP_LOW_BATT_MIN_PCT) {
+            pct = APP_LOW_BATT_MIN_PCT;
+        } else if (pct > APP_LOW_BATT_MAX_PCT) {
+            pct = APP_LOW_BATT_MAX_PCT;
+        }
+        app_settings_set_low_batt_pct(static_cast<uint8_t>(pct));
+        changed = true;
+    }
+    if (settings.has_lora_enabled) {
+        app_settings_set_lora_enabled(settings.lora_enabled);
+        changed = true;
+    }
 
     if (changed) {
         reportSettingsChanged();
@@ -541,5 +562,6 @@ void GbApp::sendSettingsEcho(bool force)
     const AppSettings &s = app_settings();
     gb_link_send(gb_msg_settings(s.notif_popup_ms, s.vibrate_messages != 0,
                                  static_cast<WatchFaceId>(s.watch_face) == WATCH_FACE_ANALOG
-                                 ? "analog" : "digital"));
+                                 ? "analog" : "digital",
+                                 s.pinned_mask, s.low_batt_pct, s.lora_enabled != 0));
 }

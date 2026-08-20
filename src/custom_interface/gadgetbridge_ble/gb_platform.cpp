@@ -39,13 +39,10 @@ void gb_platform::begin()
 
 const char *gb_platform::hardwareName()
 {
-#if defined(ARDUINO_T_WATCH_S3_ULTRA)
-    return "T-Watch Ultra";
-#elif defined(ARDUINO_T_WATCH_S3)
-    return "T-Watch S3";
-#elif defined(ARDUINO_T_LORA_PAGER)
+#if defined(ARDUINO_T_LORA_PAGER)
     return "T-LoRa Pager";
 #else
+    // ARDUINO_T_WATCH_S3_ULTRA, and the native build, which stands in for it.
     return "T-Watch Ultra";
 #endif
 }

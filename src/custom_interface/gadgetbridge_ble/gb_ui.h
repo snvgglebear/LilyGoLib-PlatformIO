@@ -23,9 +23,16 @@
 void gb_ui_begin(lv_obj_t *screen);
 
 /// Return the screen to its launcher grid, so entering it always lands on the
-/// grid rather than wherever the user last left off. Safe before gb_ui_begin()
-/// (no-op) and a no-op if the grid is already showing.
+/// grid rather than wherever the user last left off. Closes the full-screen
+/// conversation view if one is open -- that lives on lv_layer_top() and would
+/// otherwise stay stranded over the grid. Safe before gb_ui_begin() (no-op).
 void gb_ui_show_home(void);
+
+/// True when the launcher grid is the visible page and nothing full-screen is
+/// layered over it -- i.e. a "back"/"home" press has nothing left to back out
+/// of here and should leave the Gadgetbridge screen entirely. False before
+/// gb_ui_begin().
+bool gb_ui_at_home(void);
 
 /// Listener handed to GbApp::begin(); refreshes whatever the change affected.
 void gb_ui_on_state_changed(GbStateChange change);

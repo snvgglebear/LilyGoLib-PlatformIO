@@ -3,10 +3,10 @@
  * @license   MIT
  * @brief     LVGL screens for the Gadgetbridge app. See gb_ui.h.
  *
- * Layout is flex and percentage based, with two per-device decisions: font size
- * picked from the panel width, and every screen and popup built inside
- * usable_area_rect() (see usable_area.h) instead of directly
- * against lv_screen_active(), so nothing lands under the Ultra's curved glass.
+ * Layout is flex and percentage based, and every screen and popup is built
+ * inside usable_area_rect() (see usable_area.h) instead of directly against
+ * lv_screen_active(), so nothing lands under the Ultra's curved glass. Fonts
+ * and sizes come from ../app_config.h.
  *
  * A launcher grid (page 0 of the tabview) opens four pages; the status bar's
  * home button returns to it, and a left/right swipe walks between all five.
@@ -28,12 +28,14 @@
 #include <string.h>
 
 #include "gb_link.h"
-#include "gb_ui_metrics.h"
+#include "../app_config.h"
 #include "../settings/app_settings.h"
 #include "../settings/settings_screen.h"
 #include "lvgl.h"
 
 #include <usable_area.h>
+#include <SensorRTC.h>
+#include <LilyGoWatchUltra.h>
 
 namespace
 {
@@ -46,6 +48,7 @@ lv_obj_t *s_home_button = nullptr;  ///< status bar; inert while the grid shows
 lv_obj_t *s_link_label = nullptr;
 lv_obj_t *s_battery_label = nullptr;
 
+lv_obj_t *label_time = nullptr;
 lv_obj_t *s_time_label = nullptr;
 lv_obj_t *s_date_label = nullptr;
 lv_obj_t *s_weather_label = nullptr;
@@ -89,8 +92,6 @@ enum GbReplyTarget {
 };
 GbReplyTarget s_reply_target = GB_REPLY_NONE;
 
-bool s_small_screen = false;        ///< 240x240 T-Watch-S3 rather than the Ultra
-
 /// Page order inside s_tabview. The launcher grid is page 0, so entering the
 /// screen lands on it and a left/right swipe walks Grid -> Watch -> ... -> Music.
 enum GbTab {
@@ -104,21 +105,6 @@ enum GbTab {
 const char *const GB_QUICK_REPLIES[] = {"OK", "On my way", "Call you later"};
 
 // -- helpers ------------------------------------------------------------
-
-const lv_font_t *fontHuge()
-{
-    return s_small_screen ? &lv_font_montserrat_24 : &lv_font_montserrat_48;
-}
-
-const lv_font_t *fontBody()
-{
-    return s_small_screen ? &lv_font_montserrat_14 : &lv_font_montserrat_18;
-}
-
-const lv_font_t *fontSmall()
-{
-    return s_small_screen ? &lv_font_montserrat_12 : &lv_font_montserrat_16;
-}
 
 lv_obj_t *makeLabel(lv_obj_t *parent, const lv_font_t *font, lv_color_t color, const char *text)
 {
@@ -145,11 +131,11 @@ lv_obj_t *makeButton(lv_obj_t *parent, const char *text, lv_event_cb_t handler, 
 {
     lv_obj_t *button = lv_button_create(parent);
     lv_obj_add_event_cb(button, handler, LV_EVENT_CLICKED, user_data);
-    lv_obj_set_height(button, GB_BUTTON_HEIGHT);
-    lv_obj_set_style_min_width(button, GB_BUTTON_MIN_WIDTH, 0);
+    lv_obj_set_height(button, APP_GB_BUTTON_HEIGHT);
+    lv_obj_set_style_min_width(button, APP_GB_BUTTON_MIN_WIDTH, 0);
 
     lv_obj_t *label = lv_label_create(button);
-    lv_obj_set_style_text_font(label, fontBody(), 0);
+    lv_obj_set_style_text_font(label, APP_FONT_BODY, 0);
     lv_label_set_text(label, text);
     lv_obj_center(label);
 
@@ -172,10 +158,10 @@ lv_obj_t *makeSafeMsgbox()
 }
 
 /**
- * Size a msgbox's header/footer strips to GB_MSGBOX_STRIP_HEIGHT. Their
+ * Size a msgbox's header/footer strips to APP_GB_MSGBOX_STRIP_HEIGHT. Their
  * buttons (close, back, action buttons, from lv_msgbox_add_footer_button()/
  * add_header_button()) are LV_PCT(100) of the strip, so this sizes them too;
- * each button's width also gets GB_BUTTON_MIN_WIDTH as a floor, same as
+ * each button's width also gets APP_GB_BUTTON_MIN_WIDTH as a floor, same as
  * makeButton() elsewhere in this UI.
  *
  * Call once, after every lv_msgbox_add_*() call for that box.
@@ -187,12 +173,12 @@ void sizeMsgboxStrips(lv_obj_t *box)
         if (!strip) {
             continue;
         }
-        lv_obj_set_height(strip, GB_MSGBOX_STRIP_HEIGHT);
+        lv_obj_set_height(strip, APP_GB_MSGBOX_STRIP_HEIGHT);
         uint32_t count = lv_obj_get_child_count(strip);
         for (uint32_t i = 0; i < count; i++) {
             lv_obj_t *child = lv_obj_get_child(strip, i);
             if (!lv_obj_check_type(child, &lv_label_class)) {
-                lv_obj_set_style_min_width(child, GB_BUTTON_MIN_WIDTH, 0);
+                lv_obj_set_style_min_width(child, APP_GB_BUTTON_MIN_WIDTH, 0);
             }
         }
     }
@@ -246,7 +232,7 @@ std::string summarise(const GbNotification &notification)
     if (text.empty()) {
         text = notification.body;
     }
-    const size_t limit = s_small_screen ? 22 : 40;
+    const size_t limit = APP_GB_ALERT_PREVIEW_CHARS;
     if (text.size() > limit) {
         text = text.substr(0, limit - 1) + "\xE2\x80\xA6";   // ellipsis
     }
@@ -461,8 +447,8 @@ void addBubble(lv_obj_t *parent, const GbMessage &message)
     lv_obj_remove_style_all(bubble);
     lv_obj_set_width(bubble, LV_SIZE_CONTENT);
     lv_obj_set_height(bubble, LV_SIZE_CONTENT);
-    lv_obj_set_style_pad_all(bubble, s_small_screen ? 4 : 8, 0);
-    lv_obj_set_style_radius(bubble, 10, 0);
+    lv_obj_set_style_pad_all(bubble, APP_GB_BUBBLE_PAD, 0);
+    lv_obj_set_style_radius(bubble, APP_GB_BUBBLE_RADIUS, 0);
     lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(bubble, message.outgoing ? lv_palette_darken(LV_PALETTE_BLUE, 2)
                               : lv_palette_darken(LV_PALETTE_GREY, 4), 0);
@@ -475,10 +461,11 @@ void addBubble(lv_obj_t *parent, const GbMessage &message)
     // (already-resolved) width instead, and let `bubble` shrink-wrap around
     // the label's now-real size.
     lv_obj_update_layout(parent);
-    int32_t max_width = static_cast<int32_t>(lv_obj_get_content_width(parent) * 0.8f);
+    int32_t max_width = lv_obj_get_content_width(parent)
+                        * APP_GB_BUBBLE_MAX_WIDTH_PCT / 100;
     lv_obj_set_style_max_width(bubble, max_width, 0);
 
-    lv_obj_t *label = makeLabel(bubble, fontSmall(), lv_color_white(), message.text.c_str());
+    lv_obj_t *label = makeLabel(bubble, APP_FONT_CAPTION, lv_color_white(), message.text.c_str());
     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(label, LV_SIZE_CONTENT);
     lv_obj_set_style_max_width(label, max_width, 0);
@@ -489,7 +476,7 @@ void addBubble(lv_obj_t *parent, const GbMessage &message)
         gmtime_r(&when, &broken);       // the system clock holds local time
         char stamp[8];
         snprintf(stamp, sizeof(stamp), "%02d:%02d", broken.tm_hour, broken.tm_min);
-        lv_obj_t *time_label = makeLabel(bubble, fontSmall(),
+        lv_obj_t *time_label = makeLabel(bubble, APP_FONT_CAPTION,
                                          lv_palette_main(LV_PALETTE_GREY), stamp);
         // Same LV_PCT(100)-of-SIZE_CONTENT problem as the message label, and
         // the only reason for a full-width label was to give text-align
@@ -539,8 +526,8 @@ void openThread(size_t index)
     lv_obj_set_style_bg_color(s_thread_view, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(s_thread_view, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_thread_view, 0, 0);
-    lv_obj_set_style_pad_all(s_thread_view, s_small_screen ? 4 : 8, 0);
-    lv_obj_set_style_pad_row(s_thread_view, 6, 0);
+    lv_obj_set_style_pad_all(s_thread_view, APP_GB_THREAD_PAD, 0);
+    lv_obj_set_style_pad_row(s_thread_view, APP_GB_LIST_GAP, 0);
     lv_obj_set_flex_flow(s_thread_view, LV_FLEX_FLOW_COLUMN);
     lv_obj_add_flag(s_thread_view, LV_OBJ_FLAG_CLICKABLE);   // swallow taps meant for the tabs
 
@@ -550,16 +537,16 @@ void openThread(size_t index)
     lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(header, 8, 0);
+    lv_obj_set_style_pad_column(header, APP_GB_HEADER_GAP, 0);
     makeButton(header, LV_SYMBOL_LEFT, threadBackClicked, NULL);
-    s_thread_title = makeLabel(header, fontSmall(), lv_color_white(), "");
+    s_thread_title = makeLabel(header, APP_FONT_CAPTION, lv_color_white(), "");
 
     s_thread_body = lv_obj_create(s_thread_view);
     lv_obj_remove_style_all(s_thread_body);
     lv_obj_set_width(s_thread_body, LV_PCT(100));
     lv_obj_set_flex_grow(s_thread_body, 1);
     lv_obj_set_flex_flow(s_thread_body, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(s_thread_body, 6, 0);
+    lv_obj_set_style_pad_row(s_thread_body, APP_GB_LIST_GAP, 0);
     lv_obj_set_scroll_dir(s_thread_body, LV_DIR_VER);
 
     lv_obj_t *footer = makeRow(s_thread_view, LV_SIZE_CONTENT);
@@ -675,6 +662,12 @@ void refreshStatusBar()
     lv_label_set_text_fmt(s_battery_label, "%s %d%%",
                           gb_platform::charging() ? LV_SYMBOL_CHARGE : LV_SYMBOL_BATTERY_FULL,
                           percent < 0 ? 0 : percent);
+#ifdef ARDUINO
+    RTC_DateTime now = instance.rtc.getDateTime();
+    uint8_t hour = now.getHour();
+    uint8_t minute = now.getMinute();
+    lv_label_set_text_fmt(label_time, "%02u:%02u", hour, minute);
+#endif
 }
 
 void refreshClock()
@@ -732,7 +725,7 @@ void refreshNotifications()
     for (const GbNotification &notification : notifications) {
         lv_obj_t *button = lv_list_add_button(s_notification_list, LV_SYMBOL_BELL,
                                               summarise(notification).c_str());
-        lv_obj_set_style_text_font(button, fontSmall(), 0);
+        lv_obj_set_style_text_font(button, APP_FONT_CAPTION, 0);
         lv_obj_add_event_cb(button, notificationClicked, LV_EVENT_CLICKED,
                             reinterpret_cast<void *>(static_cast<intptr_t>(notification.id)));
     }
@@ -764,7 +757,7 @@ void refreshChats()
         const GbConversation &conversation = conversations[i];
 
         std::string preview = conversation.preview();
-        const size_t limit = s_small_screen ? 24 : 44;
+        const size_t limit = APP_GB_CHAT_PREVIEW_CHARS;
         if (preview.size() > limit) {
             preview = preview.substr(0, limit - 1) + "\xE2\x80\xA6";
         }
@@ -774,7 +767,7 @@ void refreshChats()
                                s_chat_list,
                                conversation.tel.empty() ? LV_SYMBOL_ENVELOPE : LV_SYMBOL_CALL,
                                text.c_str());
-        lv_obj_set_style_text_font(button, fontSmall(), 0);
+        lv_obj_set_style_text_font(button, APP_FONT_CAPTION, 0);
         if (conversation.unread) {
             lv_obj_set_style_text_color(button, lv_palette_main(LV_PALETTE_BLUE), 0);
         }
@@ -976,7 +969,7 @@ void gridTileClicked(lv_event_t *event)
         entry->open();
         return;
     }
-    showTab(entry->tab, GB_GRID_ANIMATE_TAB_CHANGE ? LV_ANIM_ON : LV_ANIM_OFF);
+    showTab(entry->tab, APP_GB_GRID_ANIMATE_TAB_CHANGE ? LV_ANIM_ON : LV_ANIM_OFF);
 }
 
 // -- construction --------------------------------------------------------
@@ -986,18 +979,16 @@ void gridTileClicked(lv_event_t *event)
 /// the touchable area back to a fingertip without growing the drawn box.
 lv_obj_t *makeIconButton(lv_obj_t *parent, const char *symbol, lv_event_cb_t handler)
 {
-    const int32_t side = s_small_screen ? GB_STATUS_BUTTON_SIZE_SMALL
-                                        : GB_STATUS_BUTTON_SIZE_LARGE;
     lv_obj_t *button = lv_button_create(parent);
     lv_obj_add_event_cb(button, handler, LV_EVENT_CLICKED, NULL);
-    lv_obj_set_size(button, side, side);
+    lv_obj_set_size(button, APP_GB_STATUS_BUTTON_SIZE, APP_GB_STATUS_BUTTON_SIZE);
     lv_obj_set_style_pad_all(button, 0, 0);
     lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_shadow_width(button, 0, 0);
-    lv_obj_set_ext_click_area(button, GB_STATUS_BUTTON_EXT_CLICK);
+    lv_obj_set_ext_click_area(button, APP_GB_STATUS_BUTTON_EXT_CLICK);
 
     lv_obj_t *label = lv_label_create(button);
-    lv_obj_set_style_text_font(label, fontSmall(), 0);
+    lv_obj_set_style_text_font(label, APP_FONT_CAPTION, 0);
     lv_label_set_text(label, symbol);
     lv_obj_center(label);
 
@@ -1017,33 +1008,33 @@ const GbGridEntry GB_GRID_ENTRIES[] = {
 void buildGridTab(lv_obj_t *tab)
 {
     const uint32_t count = sizeof(GB_GRID_ENTRIES) / sizeof(GB_GRID_ENTRIES[0]);
-    static_assert(count <= GB_GRID_COLS * GB_GRID_ROWS,
-                  "more grid entries than cells -- widen GB_GRID_ROWS/COLS");
+    static_assert(count <= APP_GB_GRID_COLS * APP_GB_GRID_ROWS,
+                  "more grid entries than cells -- widen APP_GB_GRID_ROWS/COLS");
 
     static int32_t cols[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
     static int32_t rows[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
 
     lv_obj_set_grid_dsc_array(tab, cols, rows);
-    lv_obj_set_style_pad_all(tab, GB_GRID_PAD, 0);
-    lv_obj_set_style_pad_row(tab, GB_GRID_GAP, 0);      // LVGL 9.2 has no pad_gap;
-    lv_obj_set_style_pad_column(tab, GB_GRID_GAP, 0);   // the grid reads row/column
+    lv_obj_set_style_pad_all(tab, APP_GB_GRID_PAD, 0);
+    lv_obj_set_style_pad_row(tab, APP_GB_GRID_GAP, 0);      // LVGL 9.2 has no pad_gap;
+    lv_obj_set_style_pad_column(tab, APP_GB_GRID_GAP, 0);   // the grid reads row/column
 
     for (uint32_t i = 0; i < count; i++) {
         lv_obj_t *tile = lv_button_create(tab);
-        lv_obj_set_grid_cell(tile, LV_GRID_ALIGN_STRETCH, i % GB_GRID_COLS, 1,
-                             LV_GRID_ALIGN_STRETCH, i / GB_GRID_COLS, 1);
+        lv_obj_set_grid_cell(tile, LV_GRID_ALIGN_STRETCH, i % APP_GB_GRID_COLS, 1,
+                             LV_GRID_ALIGN_STRETCH, i / APP_GB_GRID_COLS, 1);
         // The theme's button shadow on four full-size tiles is real blend work
         // on every frame of a swipe; the tile's own background is enough edge.
         lv_obj_set_style_shadow_width(tile, 0, 0);
         lv_obj_set_flex_flow(tile, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(tile, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                               LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_row(tile, s_small_screen ? 2 : 6, 0);
+        lv_obj_set_style_pad_row(tile, APP_GB_TILE_GAP, 0);
         lv_obj_add_event_cb(tile, gridTileClicked, LV_EVENT_CLICKED,
                             (void *)&GB_GRID_ENTRIES[i]);
 
-        makeLabel(tile, fontHuge(), lv_color_white(), GB_GRID_ENTRIES[i].icon);
-        makeLabel(tile, fontBody(), lv_color_white(), GB_GRID_ENTRIES[i].name);
+        makeLabel(tile, APP_FONT_HUGE, lv_color_white(), GB_GRID_ENTRIES[i].icon);
+        makeLabel(tile, APP_FONT_BODY, lv_color_white(), GB_GRID_ENTRIES[i].name);
     }
 }
 
@@ -1051,33 +1042,34 @@ void buildStatusBar(lv_obj_t *parent)
 {
     lv_obj_t *bar = lv_obj_create(parent);
     lv_obj_remove_style_all(bar);
-    lv_obj_set_size(bar, LV_PCT(100), s_small_screen ? GB_STATUS_BAR_HEIGHT_SMALL
-                                                     : GB_STATUS_BAR_HEIGHT_LARGE);
+    lv_obj_set_size(bar, LV_PCT(100), APP_GB_STATUS_BAR_HEIGHT);
     lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_hor(bar, 8, 0);
+    lv_obj_set_style_pad_hor(bar, APP_GB_STATUS_BAR_PAD_HOR, 0);
 
     // LV_SYMBOL_LIST, not LV_SYMBOL_HOME: the grid's Watch tile already uses
     // HOME and the two would read as the same destination.
     s_home_button = makeIconButton(bar, LV_SYMBOL_LIST, homeClicked);
 
-    s_link_label = makeLabel(bar, fontSmall(), lv_palette_main(LV_PALETTE_GREY),
+    s_link_label = makeLabel(bar, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY),
                              LV_SYMBOL_BLUETOOTH " Advertising");
-    s_battery_label = makeLabel(bar, fontSmall(), lv_palette_main(LV_PALETTE_GREY),
+    s_battery_label = makeLabel(bar, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY),
                                 LV_SYMBOL_BATTERY_FULL " --%");
+    label_time = makeLabel(bar,APP_FONT_CAPTION,lv_color_white(), "--:--");
+    
 }
 
 void buildWatchTab(lv_obj_t *tab)
 {
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(tab, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(tab, s_small_screen ? 4 : 10, 0);
+    lv_obj_set_style_pad_row(tab, APP_GB_TAB_GAP, 0);
 
-    s_time_label = makeLabel(tab, fontHuge(), lv_color_white(), "--:--");
-    s_date_label = makeLabel(tab, fontSmall(), lv_palette_main(LV_PALETTE_GREY), "");
-    s_weather_label = makeLabel(tab, fontSmall(), lv_palette_main(LV_PALETTE_CYAN), "");
-    s_alarm_label = makeLabel(tab, fontSmall(), lv_palette_main(LV_PALETTE_AMBER), "");
+    s_time_label = makeLabel(tab, APP_FONT_HUGE, lv_color_white(), "--:--");
+    s_date_label = makeLabel(tab, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY), "");
+    s_weather_label = makeLabel(tab, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_CYAN), "");
+    s_alarm_label = makeLabel(tab, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_AMBER), "");
 
     lv_obj_t *button = makeButton(tab, LV_SYMBOL_CALL "  Ring my phone", findPhoneClicked, NULL);
     s_find_phone_label = lv_obj_get_child(button, 0);
@@ -1086,10 +1078,10 @@ void buildWatchTab(lv_obj_t *tab)
 void buildAlertsTab(lv_obj_t *tab)
 {
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(tab, 6, 0);
+    lv_obj_set_style_pad_row(tab, APP_GB_LIST_GAP, 0);
 
     lv_obj_t *header = makeRow(tab, LV_SIZE_CONTENT);
-    s_notification_hint = makeLabel(header, fontSmall(), lv_palette_main(LV_PALETTE_GREY),
+    s_notification_hint = makeLabel(header, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY),
                                     "No notifications");
     makeButton(header, LV_SYMBOL_TRASH "  All", dismissAllClicked, NULL);
 
@@ -1101,10 +1093,10 @@ void buildAlertsTab(lv_obj_t *tab)
 void buildChatsTab(lv_obj_t *tab)
 {
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(tab, 6, 0);
+    lv_obj_set_style_pad_row(tab, APP_GB_LIST_GAP, 0);
 
     lv_obj_t *header = makeRow(tab, LV_SIZE_CONTENT);
-    s_chat_hint = makeLabel(header, fontSmall(), lv_palette_main(LV_PALETTE_GREY),
+    s_chat_hint = makeLabel(header, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY),
                             "No messages");
 
     s_chat_list = lv_list_create(tab);
@@ -1116,15 +1108,15 @@ void buildMusicTab(lv_obj_t *tab)
 {
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(tab, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(tab, s_small_screen ? 4 : 10, 0);
+    lv_obj_set_style_pad_row(tab, APP_GB_TAB_GAP, 0);
 
-    s_music_track = makeLabel(tab, fontBody(), lv_color_white(), "No track");
+    s_music_track = makeLabel(tab, APP_FONT_BODY, lv_color_white(), "No track");
     lv_label_set_long_mode(s_music_track, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_obj_set_width(s_music_track, LV_PCT(90));
+    lv_obj_set_width(s_music_track, LV_PCT(APP_GB_MUSIC_TRACK_WIDTH_PCT));
     lv_obj_set_style_text_align(s_music_track, LV_TEXT_ALIGN_CENTER, 0);
 
-    s_music_artist = makeLabel(tab, fontSmall(), lv_palette_main(LV_PALETTE_GREY), "");
-    s_music_state = makeLabel(tab, fontSmall(), lv_palette_main(LV_PALETTE_GREY), "unknown");
+    s_music_artist = makeLabel(tab, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY), "");
+    s_music_state = makeLabel(tab, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY), "unknown");
 
     lv_obj_t *transport = makeRow(tab, LV_SIZE_CONTENT);
     makeButton(transport, LV_SYMBOL_PREV, musicClicked, const_cast<char *>("previous"));
@@ -1140,8 +1132,6 @@ void buildMusicTab(lv_obj_t *tab)
 
 void gb_ui_begin(lv_obj_t *screen)
 {
-    s_small_screen = lv_display_get_horizontal_resolution(NULL) <= 320;
-
     // The caller already painted @p screen black and clipped it to the
     // bezel's rounded shape (usable_area_init()/usable_area_style_screen());
     // usable_area_rect() gives the app content the largest rect that is
@@ -1153,7 +1143,7 @@ void gb_ui_begin(lv_obj_t *screen)
     buildStatusBar(screen);
 
     // The tab bar is replaced by the launcher grid on page 0 plus the status
-    // bar's home button, which reclaims its 48px (34 on the S3) for the lists.
+    // bar's home button, which reclaims its 48px for the lists.
     // Both calls: the size zeroes the strip, the HIDDEN flag makes the
     // tabview's own flex layout skip it so no theme padding survives as a
     // sliver. Swiping between pages is the content container's scroll snap and
@@ -1189,7 +1179,14 @@ void gb_ui_show_home(void)
     if (!s_tabview) {
         return;
     }
+    closeThread();      // full-screen and on lv_layer_top(): it outlives a tab change
     showTab(GB_TAB_GRID, LV_ANIM_OFF);
+}
+
+bool gb_ui_at_home(void)
+{
+    return s_tabview && !s_thread_view &&
+           lv_tabview_get_tab_active(s_tabview) == GB_TAB_GRID;
 }
 
 void gb_ui_on_state_changed(GbStateChange change)

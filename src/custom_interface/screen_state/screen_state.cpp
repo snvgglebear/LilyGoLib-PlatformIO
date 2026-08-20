@@ -34,6 +34,11 @@ uint32_t screen_state_get_timeout_ms(void)
     return sleep_timeout_ms;
 }
 
+bool screen_state_is_asleep(void)
+{
+    return screen_asleep;
+}
+
 void screen_state_set_wrist_wake(bool enable)
 {
     wrist_wake_enabled = enable;
@@ -75,9 +80,8 @@ static void wake(void)
 #include <LilyGoLib.h>
 #include <bosch/BoschSensorDataHelper.hpp>   // SensorLib; hardware-only, see the wrist-tilt block below
 
-/*Only the BHI260AP-equipped boards (T-Watch-Ultra, T-LoRa-Pager) can raise a
-  wrist-tilt gesture - T-Watch-S3 uses a BMA423 instead, which has no
-  equivalent virtual sensor on this SDK.*/
+/*Raise-to-wake needs the BHI260AP's wrist-tilt virtual sensor, which the
+  T-Watch-Ultra and T-LoRa-Pager have.*/
 #if defined(ARDUINO_T_WATCH_S3_ULTRA) || defined(ARDUINO_T_LORA_PAGER)
 #define HAS_WRIST_TILT_SENSOR
 #endif
@@ -290,6 +294,16 @@ void manageSleepState(void)
     }
 }
 
+void screen_state_wake_display(void)
+{
+    if (!screen_asleep) {
+        return;
+    }
+    instance.wakeupDisplay();
+    wake();
+    last_activity_ms = millis();
+}
+
 static void noteActivity(void)
 {
     last_activity_ms = millis();
@@ -349,6 +363,16 @@ void manageSleepState(void)
         printf("[screen_state] sleep (idle timeout)\n");
         screen_asleep = true;
     }
+}
+
+void screen_state_wake_display(void)
+{
+    if (!screen_asleep) {
+        return;
+    }
+    printf("[screen_state] wake (button)\n");
+    wake();     // no panel to power back on natively -- see manageSleepState()
+    last_activity_ms = hostMillis();
 }
 
 static void noteActivity(void)

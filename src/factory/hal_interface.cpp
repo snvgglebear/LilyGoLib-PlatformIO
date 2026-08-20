@@ -18,9 +18,56 @@
  *     #endif
  *     }
  *
- * The emulator branch is not a no-op: it returns believable simulated data
- * (random-walk battery voltage, a synthetic WiFi scan list, a moving GPS fix) so
- * the UI can be laid out and exercised on a PC with no board attached.
+ * The emulator branch is often not a no-op: where it matters for laying out a
+ * screen it returns believable simulated data (a jittering battery percentage in
+ * hw_get_monitor_params(), a synthetic one-entry WiFi scan list, a synthetic GPS
+ * fix, random BME280 weather) so the UI can be exercised on a PC with no board
+ * attached. But that is far from universal -- plenty of #else branches are inert
+ * or return a fixed constant, and a few paths are unimplemented on hardware too.
+ *
+ * ---------------------------------------------------------------------------
+ * ANNOTATION LEGEND
+ *
+ * Every function below carries a tag saying what is actually behind it. Read
+ * these before trusting a value on screen:
+ *
+ *   [REAL]         talks to real silicon on the target board.
+ *   [REAL-HOST]    genuine data, but from the host OS rather than the board
+ *                  (only the emulator's system clock).
+ *   [SIM]          fabricated value -- random, swept, or a hardcoded literal.
+ *                  Looks live, is not.
+ *   [INERT]        the branch does nothing and returns nothing useful: an empty
+ *                  body, or an out-param left exactly as the caller passed it.
+ *                  Distinct from [SIM]: nothing is invented, but nothing happens.
+ *   [FAKE-SUCCESS] does nothing yet reports success. The dangerous subset of
+ *                  [INERT] -- callers branch on the lie.
+ *   [PURE]         no hardware on any platform: arithmetic, a table lookup, or
+ *                  the in-RAM copy of user_setting. Identical everywhere.
+ *   [DERIVED]      no hardware directly; inherits real-or-sim from whatever it
+ *                  reads (in practice hw_get_device_online()).
+ *   [STUB]         not implemented on ANY platform, hardware included.
+ *   [DEAD]         guarded by a macro no env in this repo defines, so it is a
+ *                  no-op everywhere as currently configured.
+ *   [MIXED]        the branches differ enough to need itemising; see the tag.
+ *
+ * The four things worth knowing at a glance:
+ *
+ *   1. The hw_enable_ble / hw_disable_ble / hw_deinit_ble / hw_get_ble_message
+ *      group is [STUB] -- empty even on hardware. The BLE keyboard family
+ *      (hw_set_ble_kb_*) is unrelated to it and is fully real.
+ *   2. hw_get_remote_code()'s simulated branch is not emulator-only: any board
+ *      built without USING_IR_RECEIVER also returns random(0, INT_MAX), so the
+ *      IR app shows invented "received" codes rather than nothing.
+ *   3. hw_player_running() returns true unconditionally on the emulator, and
+ *      hw_sd_list() / hw_set_mic_start() report success without doing anything.
+ *   4. hw_has_otg_function() returns true from both arms of its #if, on every
+ *      board -- the conditional does nothing.
+ *
+ * Scope note: these tags describe this file only. A [REAL] tag means the call
+ * reaches LilyGoLib against real hardware, not that the peripheral is fitted --
+ * that is what the HW_*_ONLINE probe bits are for, and several functions check
+ * them and fall back to a constant when the part did not answer.
+ * ---------------------------------------------------------------------------
  *
  * Nested inside those are the finer-grained capability guards
  * (`USING_AUDIO_CODEC`, `USING_BQ_GAUGE`, `USING_ST25R3916`, ...) resolved by the
@@ -239,6 +286,8 @@ extern void hw_radio_begin();
  * [min, max] inclusive, tolerating reversed arguments.
  */
 #ifndef ARDUINO
+// [SIM-SUPPORT] Emulator only. Not a HAL entry point -- it exists purely so the
+// #else branches below can fabricate readings; on hardware Arduino's random() wins.
 int random(int min, int max)
 {
     if (min > max) {
@@ -262,6 +311,7 @@ int random(int min, int max)
  * locals; the default stack overflows. This is the supported way to change it --
  * see https://docs.espressif.com/projects/arduino-esp32/en/latest/faq.html
  */
+// [REAL] Arduino only; genuinely changes the loop task's stack size.
 size_t getArduinoLoopTaskStackSize(void)
 {
     return 30 * 1024;
@@ -293,6 +343,8 @@ size_t getArduinoLoopTaskStackSize(void)
  *                 false if the decoder could not be allocated or hit a bad frame
  * @see            https://github.com/ultraembedded/libhelix-mp3
  */
+// [REAL] Full MP3 decode to real I2S/codec output. Arduino only -- there is no
+// emulator counterpart, so nothing in this file ever plays audio on the desktop.
 static bool playMP3(uint8_t *src, size_t src_len)
 {
     int16_t outBuf[MAX_NCHAN * MAX_NGRAN * MAX_NSAMP];
@@ -407,6 +459,7 @@ WAIT:
  * fallback, and a failed allocation simply aborts playback with a log line.
  * Only ".mp3" is handled -- the else branch is deliberately empty.
  */
+// [REAL] Real filesystem read (SD or FFat) + real decode. Arduino only.
 static void hw_sd_play(audio_source_type_t source, const char *filename)
 {
     bool isMP3 = String(filename).endsWith(".mp3");
@@ -492,6 +545,7 @@ static void hw_sd_play(audio_source_type_t source, const char *filename)
  *
  * The two lines after the loop are unreachable: the `while (1)` never exits.
  */
+// [REAL] Real FreeRTOS task driving real audio output. Arduino only.
 static void playerTask(void *args)
 {
     audio_params_t params;
@@ -567,6 +621,7 @@ static int read_count = 0;                  ///< frame counter, used only to rat
  * @param freq_per_bin  currently unused; retained for callers that want to label axes
  * @see https://docs.espressif.com/projects/esp-dsp/en/latest/esp32/esp-dsp-apis.html
  */
+// [REAL] Real DSP: esp-dsp FFT over real microphone samples. Arduino only.
 static void process_channel_fft(int16_t *channel_data, float *bands, float freq_per_bin)
 {
     for (int i = 0; i < FFT_SIZE; i++) {
@@ -629,6 +684,10 @@ static void process_channel_fft(int16_t *channel_data, float *bands, float freq_
  * On the emulator this is a no-op and `fft_data` is left untouched, so callers
  * must initialise it.
  */
+// [REAL] on hardware -- real codec/PDM capture + real FFT.
+// [INERT] on emulator: the whole body is inside #ifdef ARDUINO, so `fft_data` is
+// left exactly as the caller passed it. Not simulated -- the spectrum app shows
+// whatever stale/uninitialised values the caller supplied.
 void hw_audio_get_fft_data(FFTData *fft_data)
 {
 #ifdef ARDUINO
@@ -660,6 +719,9 @@ void hw_audio_get_fft_data(FFTData *fft_data)
 #endif /*ARDUINO*/
 }
 
+// [REAL] on hardware -- opens the codec and initialises the FFT tables.
+// [FAKE-SUCCESS] on emulator: does nothing but still returns true, so callers
+// believe the microphone started.
 bool hw_set_mic_start()
 {
 #ifdef ARDUINO
@@ -690,6 +752,7 @@ bool hw_set_mic_start()
     return true;
 }
 
+// [REAL] on hardware. [INERT] on emulator (empty body).
 void hw_set_mic_stop()
 {
 #ifdef ARDUINO
@@ -715,6 +778,7 @@ extern void ui_nfc_pop_up(wifi_conn_params_t &params);  // ui_nfc.cpp
  * the field, before its contents are parsed, so the user gets immediate haptic
  * confirmation that they held the card in the right place.
  */
+// [REAL] Real RFAL tag-detect callback driving the real vibration motor.
 static void nrf_notify_callback()
 {
     Serial.println("NDEF Detected.");
@@ -741,6 +805,8 @@ static void nrf_notify_callback()
  * trusts the parser to have terminated them. The Wi-Fi branch is the careful
  * one -- it builds std::strings from an explicit buffer+length pair.
  */
+// [REAL] Real NDEF records decoded from a real tag. Arduino + ST25R3916 only;
+// there is no simulated tag source, so the NFC app is untestable on the emulator.
 static void ndef_event_callback(ndefTypeId id, void *data)
 {
     static ndefTypeRtdDeviceInfo   devInfoData;
@@ -803,6 +869,8 @@ static void ndef_event_callback(ndefTypeId id, void *data)
  * The rail is switched on first -- beginNFC() talks to the chip over SPI and
  * would fail if it were still unpowered. Returns false on boards without NFC.
  */
+// [REAL] on ST25R3916 boards. [HONEST-FALSE] everywhere else (emulator, or a board
+// with no NFC front end): returns false rather than pretending discovery started.
 bool hw_start_nfc_discovery()
 {
 #if  defined(USING_ST25R3916) && defined(ARDUINO)
@@ -818,6 +886,7 @@ bool hw_start_nfc_discovery()
  * draw on the battery, so leaving discovery running after the NFC app closes
  * would be costly -- hence the paired call from the app's exit callback.
  */
+// [REAL] on ST25R3916 boards. [INERT] elsewhere.
 void hw_stop_nfc_discovery()
 {
 #if  defined(USING_ST25R3916) && defined(ARDUINO)
@@ -845,6 +914,10 @@ const uint8_t mic_gain = 10;
  * player task, selects the radio driver, wires up key-press feedback, and
  * restores persisted user settings.
  */
+// [MIXED] Hardware branch is [REAL] throughout: real player task, real radio bring-up,
+// real codec gain, real haptics, real NVS restore, real PMU event hook.
+// Emulator branch is [INERT]: it only seeds user_setting with in-RAM defaults --
+// no player task, no radio, no persistence, so settings reset every run.
 void hw_init()
 {
 #ifdef ARDUINO
@@ -965,6 +1038,7 @@ void hw_init()
 
 }
 
+// [PURE] No hardware on either path -- hands back the in-RAM copy of user_setting.
 void hw_get_user_setting(user_setting_params_t &param)
 {
     param = user_setting;
@@ -975,6 +1049,8 @@ void hw_get_user_setting(user_setting_params_t &param)
     printf("Get charger_enable      :%u\n", user_setting.charger_enable);
 }
 
+// [MIXED] [REAL] persistence to NVS on hardware; [INERT] on emulator, where the
+// value lives in RAM only and is lost when the process exits.
 void hw_set_user_setting(user_setting_params_t &param)
 {
     user_setting = param;
@@ -989,16 +1065,19 @@ void hw_set_user_setting(user_setting_params_t &param)
 
 }
 
+// [PURE] Arithmetic on the stored setting; identical on both platforms.
 const uint32_t hw_get_disp_timeout_ms()
 {
     return user_setting.disp_timeout_second * 1000UL;
 }
 
+// [PURE] Size of the compile-time hw_devices[] table.
 uint16_t hw_get_devices_nums()
 {
     return sizeof(hw_devices) / sizeof(hw_devices[0]);
 }
 
+// [PURE] Index into the compile-time hw_devices[] table.
 const char *hw_get_devices_name(int index)
 {
     if (index > hw_get_devices_nums()) {
@@ -1007,6 +1086,9 @@ const char *hw_get_devices_name(int index)
     return hw_devices[index];
 }
 
+// [REAL] on hardware (queried from LilyGoLib).
+// [SIM] on emulator: hardcoded "LilyGo T-LoRa-Pager (2025)" regardless of which
+// emulator_* env is running, so the watch emulators misreport themselves as a Pager.
 const char *hw_get_variant_name()
 {
 #ifdef ARDUINO
@@ -1017,6 +1099,8 @@ const char *hw_get_variant_name()
 }
 
 
+// [REAL] on hardware -- the factory-burned eFuse MAC.
+// [INERT] on emulator: returns false and leaves `mac` untouched.
 bool hw_get_mac(uint8_t *mac)
 {
 #ifdef ARDUINO
@@ -1026,6 +1110,7 @@ bool hw_get_mac(uint8_t *mac)
     return false;
 }
 
+// [REAL] on hardware. [SIM] on emulator: fixed string "NO CONFIG".
 void hw_get_wifi_ssid(string &param)
 {
 #ifdef ARDUINO
@@ -1036,6 +1121,9 @@ void hw_get_wifi_ssid(string &param)
 }
 
 
+// [MIXED] Hardware: [REAL] read from the RTC chip, but falls back to the fixed
+// string "2000/01/01 00:00:00" when the RTC did not probe.
+// Emulator: [REAL-HOST] -- genuine host system clock, not a fabricated value.
 void hw_get_date_time(string &param)
 {
 #ifdef ARDUINO
@@ -1065,6 +1153,8 @@ void hw_get_date_time(string &param)
 #endif
 }
 
+// [MIXED] Same as the string overload above: [REAL] RTC on hardware (zeroed struct
+// if the RTC is offline), [REAL-HOST] system clock on the emulator.
 void hw_get_date_time(struct tm &timeinfo)
 {
 #ifdef ARDUINO
@@ -1081,6 +1171,8 @@ void hw_get_date_time(struct tm &timeinfo)
 }
 
 
+// [REAL] on hardware. [SIM] on emulator: constant WL_NO_SSID_AVAIL -- there is no
+// host-WiFi passthrough, so the emulator is permanently "no network".
 wl_status_t hw_get_wifi_status()
 {
 #ifdef ARDUINO
@@ -1090,6 +1182,7 @@ wl_status_t hw_get_wifi_status()
 #endif
 }
 
+// [REAL] on hardware when associated. [SIM] otherwise: fixed "N.A".
 void hw_get_ip_address(string &param)
 {
 #ifdef ARDUINO
@@ -1101,6 +1194,7 @@ void hw_get_ip_address(string &param)
     param = "N.A";
 }
 
+// [REAL] on hardware when associated. [SIM] otherwise: constant -99 dBm.
 int16_t hw_get_wifi_rssi()
 {
 #ifdef ARDUINO
@@ -1117,6 +1211,9 @@ int16_t hw_get_wifi_rssi()
  * refreshed before reading), otherwise the PMU's ADC. Returns 0 when neither is
  * available -- callers should treat 0 as "unknown", not "flat".
  */
+// [REAL] on hardware -- BQ fuel gauge if fitted, else the PMU ADC.
+// [INERT] on emulator: returns 0. Note the emulator's *displayed* battery figures
+// come from hw_get_monitor_params() below, not from here.
 int16_t hw_get_battery_voltage()
 {
 #ifdef ARDUINO
@@ -1147,6 +1244,8 @@ int16_t hw_get_battery_voltage()
  * card is reported in GB, the internal FFat partition in MB (a partition sized
  * in megabytes would round to 0.0 in GB).
  */
+// [REAL] on hardware (real SD card / FFat partition geometry).
+// [INERT] on emulator: 0.0.
 float hw_get_sd_size()
 {
     float size = 0.0;
@@ -1163,6 +1262,8 @@ float hw_get_sd_size()
     return size;
 }
 
+// [REAL] on hardware -- the actual ESP_ARDUINO_VERSION_* the firmware was built with.
+// [SIM] on emulator: hardcoded "V2.0.17", which can silently go stale.
 void hw_get_arduino_version(string &param)
 {
 #ifdef ARDUINO
@@ -1188,6 +1289,8 @@ void hw_get_arduino_version(string &param)
  * shows it as a blinking indicator. GPS_PPS comes from the board's
  * variants/lilygo_<board>/pins_arduino.h and is absent on boards without it.
  */
+// [REAL] where the board defines GPS_PPS; a real GPIO interrupt on a real PPS line.
+// [INERT] on the emulator and on boards without the pin (GPS_PPS undefined).
 void hw_gps_attach_pps()
 {
 #ifdef GPS_PPS
@@ -1202,6 +1305,7 @@ void hw_gps_attach_pps()
  * Stop watching PPS and park the pin as open-drain, so the interrupt does not
  * keep waking the CPU once the GPS app is closed.
  */
+// [REAL] where GPS_PPS exists. [INERT] otherwise.
 void hw_gps_detach_pps()
 {
 #ifdef GPS_PPS
@@ -1222,6 +1326,10 @@ void hw_gps_detach_pps()
  * @note   `param` is memset partway through, so the caller's `enable_debug` is
  *         read into a local first; anything else the caller pre-set is cleared.
  */
+// [REAL] on hardware: real NMEA parsing, real fix, and a real one-shot RTC sync.
+// [SIM] on emulator: model "Dummy", lat/lng pinned to 0.0 (i.e. the fix does NOT
+// move), random speed 0..119 km/h, random satellite count 0..29, constant rx_size,
+// host clock for the timestamp -- and it always claims a valid fix by returning true.
 bool hw_get_gps_info(gps_params_t &param)
 {
 #ifdef ARDUINO
@@ -1302,6 +1410,9 @@ bool hw_get_gps_info(gps_params_t &param)
 }
 
 
+// [REAL] on hardware -- the actual I2C/SPI probe bitmask from instance.getDeviceProbe().
+// [SIM] on emulator: a hand-built bitmask claiming touch + haptics + PMU (+ keyboard)
+// are present. Everything gated on other HW_*_ONLINE bits therefore reports offline.
 uint32_t hw_get_device_online()
 {
 #ifdef ARDUINO
@@ -1316,6 +1427,8 @@ uint32_t hw_get_device_online()
 }
 
 
+// [REAL] on hardware. [INERT] on emulator -- note the asymmetry with the getter
+// below, so a brightness slider on the emulator never reads back what it set.
 void hw_set_disp_backlight(uint8_t level)
 {
 #ifdef ARDUINO
@@ -1323,6 +1436,7 @@ void hw_set_disp_backlight(uint8_t level)
 #endif
 }
 
+// [REAL] on hardware. [SIM] on emulator: constant 100.
 uint8_t hw_get_disp_backlight()
 {
 #ifdef ARDUINO
@@ -1332,6 +1446,7 @@ uint8_t hw_get_disp_backlight()
 #endif
 }
 
+// [REAL] on hardware (derived from actual brightness). [SIM] on emulator: always true.
 bool hw_get_disp_is_on()
 {
 #ifdef ARDUINO
@@ -1341,6 +1456,7 @@ bool hw_get_disp_is_on()
 #endif
 }
 
+// [REAL] on keyboard boards. [INERT] elsewhere.
 void hw_set_kb_backlight(uint8_t level)
 {
 #if defined(ARDUINO) && defined(USING_INPUT_DEV_KEYBOARD)
@@ -1348,6 +1464,7 @@ void hw_set_kb_backlight(uint8_t level)
 #endif
 }
 
+// [REAL] on boards with an indicator LED. [INERT] elsewhere.
 void hw_set_led_backlight(uint8_t level)
 {
 #if defined(ARDUINO) && defined(USING_LED_INDICATOR)
@@ -1355,6 +1472,7 @@ void hw_set_led_backlight(uint8_t level)
 #endif
 }
 
+// [REAL] on keyboard boards. [SIM] elsewhere: constant 100.
 uint8_t hw_get_kb_backlight()
 {
 #if defined(ARDUINO) && defined(USING_INPUT_DEV_KEYBOARD)
@@ -1364,6 +1482,8 @@ uint8_t hw_get_kb_backlight()
 #endif
 }
 
+// [REAL] on hardware -- starts a genuine async scan.
+// [INERT] on emulator: returns 0 without scanning.
 int16_t hw_set_wifi_scan()
 {
 #ifdef ARDUINO
@@ -1373,6 +1493,7 @@ int16_t hw_set_wifi_scan()
     return 0;
 }
 
+// [REAL] on hardware. [SIM] on emulator: always false.
 bool hw_get_wifi_scanning()
 {
 #ifdef ARDUINO
@@ -1393,6 +1514,8 @@ bool hw_get_wifi_scanning()
  * On the emulator a single fake network is returned so the WiFi app has
  * something to render.
  */
+// [REAL] on hardware -- the actual scan results.
+// [SIM] on emulator: one invented AP, "LilyGo-AABB0" at -10 dBm on channel 0.
 void hw_get_wifi_scan_result(vector < wifi_scan_params_t > &list)
 {
     list.clear();
@@ -1431,6 +1554,8 @@ void hw_get_wifi_scan_result(vector < wifi_scan_params_t > &list)
 #endif
 }
 
+// [REAL] on hardware. [INERT] on emulator: logs the credentials and returns; no
+// association is attempted and hw_get_wifi_connected() stays false forever.
 void hw_set_wifi_connect(wifi_conn_params_t &params)
 {
     printf("hw_set_wifi_connect:ssid:<%s> password <%s>\n", params.ssid.c_str(), params.password.c_str());
@@ -1443,6 +1568,7 @@ void hw_set_wifi_connect(wifi_conn_params_t &params)
 #endif
 }
 
+// [REAL] on hardware. [SIM] on emulator: always false.
 bool hw_get_wifi_connected()
 {
 #ifdef ARDUINO
@@ -1452,6 +1578,7 @@ bool hw_get_wifi_connected()
 }
 
 #ifdef ARDUINO
+// [REAL] Real directory walk over a real FS object. Arduino only.
 static void listDir(vector < AudioParams_t > &list, fs::FS &fs, const char * dirname, uint8_t levels, audio_source_type_t source_type)
 {
     Serial.printf("Listing directory: %s\r\n", dirname);
@@ -1495,6 +1622,7 @@ static void listDir(vector < AudioParams_t > &list, fs::FS &fs, const char * dir
 }
 #endif
 
+// [REAL] on hardware. [INERT] on emulator: leaves `list` as the caller left it.
 void hw_fat_list(vector < AudioParams_t > &list, const char *dirname, uint8_t levels)
 {
 #if defined(ARDUINO)
@@ -1503,6 +1631,8 @@ void hw_fat_list(vector < AudioParams_t > &list, const char *dirname, uint8_t le
 #endif
 }
 
+// [REAL] on boards with an SD socket.
+// [FAKE-SUCCESS] elsewhere: returns true without mounting or listing anything.
 bool hw_sd_list(vector < AudioParams_t > &list, const char *dirname, uint8_t levels)
 {
 #if defined(ARDUINO) && defined(HAS_SD_CARD_SOCKET)
@@ -1520,6 +1650,7 @@ bool hw_sd_list(vector < AudioParams_t > &list, const char *dirname, uint8_t lev
     return true;
 }
 
+// [REAL] on boards with an SD socket. [INERT] elsewhere.
 void hw_mount_sd()
 {
 #if defined(ARDUINO) && defined(HAS_SD_CARD_SOCKET)
@@ -1527,6 +1658,9 @@ void hw_mount_sd()
 #endif
 }
 
+// [REAL] on hardware -- enumerates the real SD card and FFat partition.
+// [SIM] on emulator: three invented filenames (/abc.mp3, /ccc.mp3, /ddd.mp3) that
+// do not exist and cannot be played.
 void hw_get_filesystem_music(vector < AudioParams_t > &list)
 {
     list.clear();
@@ -1548,6 +1682,8 @@ void hw_get_filesystem_music(vector < AudioParams_t > &list)
 #endif
 }
 
+// [REAL] on hardware -- pre-empts the current track and queues the new one.
+// [INERT] on emulator: prints the request, no queue and no player task exist.
 void hw_set_sd_music_play(audio_source_type_t source_type, const char *filename)
 {
     audio_params_t params = {
@@ -1572,6 +1708,7 @@ void hw_set_sd_music_play(audio_source_type_t source_type, const char *filename)
 #endif
 }
 
+// [REAL] on hardware. [INERT] on emulator.
 void hw_set_play_stop()
 {
 #ifdef ARDUINO
@@ -1585,6 +1722,7 @@ void hw_set_play_stop()
 #endif
 }
 
+// [REAL] on hardware (clears PLAYER_PLAY, parking the decoder). [INERT] on emulator.
 void hw_set_sd_music_pause()
 {
     printf("playerTaskHandler pause!\n");
@@ -1593,6 +1731,7 @@ void hw_set_sd_music_pause()
 #endif
 }
 
+// [REAL] on hardware. [INERT] on emulator.
 void hw_set_sd_music_resume()
 {
     printf("playerTaskHandler resume!\n");
@@ -1601,6 +1740,9 @@ void hw_set_sd_music_resume()
 #endif
 }
 
+// [REAL] on hardware -- reads the real PLAYER_RUNNING bit.
+// [SIM] on emulator: unconditionally returns true, i.e. "always playing". Any new
+// `while (hw_player_running())` spin loop added outside #ifdef ARDUINO would hang.
 bool hw_player_running()
 {
 #ifdef ARDUINO
@@ -1609,6 +1751,7 @@ bool hw_player_running()
     return true;
 }
 
+// [REAL] on codec boards. [INERT] elsewhere.
 void hw_set_volume(uint8_t volume)
 {
 #if defined(ARDUINO) && defined(USING_AUDIO_CODEC)
@@ -1620,6 +1763,7 @@ void hw_set_volume(uint8_t volume)
 #endif //USING_AUDIO_CODEC
 }
 
+// [REAL] on codec boards. [SIM] elsewhere: constant 100.
 uint8_t hw_get_volume()
 {
 #if defined(ARDUINO) && defined(USING_AUDIO_CODEC)
@@ -1639,6 +1783,8 @@ uint8_t hw_get_volume()
  * chip is told to drop the rails. Only a charger insertion or the power button
  * brings the device back; this does not return.
  */
+// [REAL] on hardware -- really cuts the power rails. [INERT] on emulator: the
+// process keeps running, so a "shutdown" is invisible on the desktop.
 void hw_shutdown()
 {
 #ifdef ARDUINO
@@ -1660,6 +1806,7 @@ void hw_shutdown()
  * its decoder), which is acceptable only because the whole context is discarded
  * on wake: deep sleep resets the CPU and boot restarts from setup().
  */
+// [REAL] on hardware -- real deep sleep, does not return. [INERT] on emulator.
 void hw_sleep()
 {
 #ifdef ARDUINO
@@ -1678,6 +1825,8 @@ void hw_sleep()
 #endif
 }
 
+// [REAL] only on PPM boards (T-LoRa-Pager).
+// [SIM] on PMU boards and the emulator: constant false, not a query.
 bool hw_get_otg_enable()
 {
 #if defined(ARDUINO) && defined(USING_PPM_MANAGE)
@@ -1687,6 +1836,7 @@ bool hw_get_otg_enable()
 #endif
 }
 
+// [REAL] only on PPM boards. [INERT] elsewhere: returns false, changes nothing.
 bool hw_set_otg(bool enable)
 {
 #if defined(ARDUINO) && defined(USING_PPM_MANAGE)
@@ -1700,6 +1850,7 @@ bool hw_set_otg(bool enable)
     return false;
 }
 
+// [REAL] on hardware (PPM or PMU). [SIM] on emulator: constant false.
 bool hw_get_charge_enable()
 {
 #ifdef ARDUINO
@@ -1713,6 +1864,7 @@ bool hw_get_charge_enable()
 #endif
 }
 
+// [REAL] on hardware. [INERT] on emulator.
 void hw_set_charger(bool enable)
 {
 #ifdef ARDUINO
@@ -1732,6 +1884,7 @@ void hw_set_charger(bool enable)
 #endif
 }
 
+// [REAL] on hardware -- read back from the charger chip. [SIM] on emulator: 0.
 uint16_t hw_get_charger_current()
 {
 #ifdef ARDUINO
@@ -1745,6 +1898,7 @@ uint16_t hw_get_charger_current()
 #endif
 }
 
+// [REAL] on hardware. [INERT] on emulator.
 void hw_set_charger_current(uint16_t milliampere)
 {
 #ifdef ARDUINO
@@ -1756,6 +1910,10 @@ void hw_set_charger_current(uint16_t milliampere)
 #endif
 }
 
+// [MIXED] and note this one is NOT wrapped in #ifdef ARDUINO:
+//   PPM boards  -- [PURE]: arithmetic on the stored setting, the chip is not read.
+//   PMU boards  -- [REAL]: the live charge current is read back and matched to the table.
+//   emulator    -- [PURE]: same table lookup against the in-RAM stored setting.
 uint8_t hw_get_charger_current_level()
 {
 #if defined(USING_PPM_MANAGE)
@@ -1805,6 +1963,9 @@ uint8_t hw_get_charger_current_level()
  * @return the actual current in mA that was programmed, which the caller should
  *         display instead of assuming the requested value took effect
  */
+// [REAL] on hardware -- really programs the charger.
+// [PURE] on emulator: resolves the level against the table and returns the mA it
+// *would* have set, without touching anything.
 uint16_t hw_set_charger_current_level(uint8_t level)
 {
 #ifdef ARDUINO
@@ -1843,6 +2004,9 @@ uint16_t hw_set_charger_current_level(uint8_t level)
 
 }
 
+// [REAL] on hardware -- every field comes from the PPM/PMU and, if fitted, the BQ gauge.
+// [SIM] on emulator: battery percent random 30..100 (jitters every call), voltage
+// fixed 4178 mV, state fixed "Fast charging", USB fixed 4998 mV, NTC "Normal".
 void hw_get_monitor_params(monitor_params_t &params)
 {
 #ifdef ARDUINO
@@ -1912,6 +2076,10 @@ void hw_get_monitor_params(monitor_params_t &params)
 
 static imu_params_t imu_params = {0, 0, 0, 0};
 
+// [REAL] on hardware -- BHI260 fused orientation (filled by imu_data_process below)
+// or the BMA423's direction register.
+// [INERT] on emulator: copies out the file-static imu_params, which nothing ever
+// writes there, so it is a constant {0,0,0,0} -- looks live, never changes.
 void hw_get_imu_params(imu_params_t &params)
 {
 #ifdef ARDUINO
@@ -1930,6 +2098,8 @@ void hw_get_imu_params(imu_params_t &params)
 }
 
 #if  defined(ARDUINO) && defined(USING_BHI260_SENSOR)
+// [REAL] Real BHI260AP quaternion -> Euler conversion, called from the sensor's
+// own event callback. Arduino only.
 void imu_data_process(uint8_t sensor_id, uint8_t *data_ptr, uint32_t len, uint64_t *timestamp, void *user_data)
 {
     float roll, pitch, yaw;
@@ -1940,6 +2110,7 @@ void imu_data_process(uint8_t sensor_id, uint8_t *data_ptr, uint32_t len, uint64
 }
 #endif //ARDUINO
 
+// [REAL] on hardware -- really configures and subscribes to the IMU. [INERT] on emulator.
 void hw_register_imu_process()
 {
 #if defined(ARDUINO)
@@ -1963,6 +2134,7 @@ void hw_register_imu_process()
 #endif // ARDUINO
 }
 
+// [REAL] on hardware. [INERT] on emulator.
 void hw_unregister_imu_process()
 {
 #if defined(ARDUINO)
@@ -1980,12 +2152,17 @@ void hw_unregister_imu_process()
 
 //* ble //
 
+// [STUB] Not implemented on ANY platform -- the hardware branch is an empty #if body.
+// These four hw_*_ble* entry points are leftover scaffolding for a UART-over-BLE
+// transport that was never written here; the real BLE work lives in src/gadgetbridge.
+// Distinct from the hw_set_ble_kb_* family below, which IS implemented.
 void hw_enable_ble(const char *devName)
 {
 #if  defined(ARDUINO) && defined(USING_UART_BLE)
 #endif
 }
 
+// [STUB] Empty on hardware and emulator alike.
 void hw_deinit_ble()
 {
 #if  defined(ARDUINO) && defined(USING_UART_BLE)
@@ -1993,6 +2170,7 @@ void hw_deinit_ble()
 #endif
 }
 
+// [STUB] Empty on hardware and emulator alike.
 void hw_disable_ble()
 {
 #if  defined(ARDUINO) && defined(USING_UART_BLE)
@@ -2000,6 +2178,7 @@ void hw_disable_ble()
 #endif
 }
 
+// [STUB] Always returns 0 on every platform; `buffer` is never written.
 size_t hw_get_ble_message(char *buffer, size_t buffer_size)
 {
 #if  defined(ARDUINO) && defined(USING_UART_BLE)
@@ -2007,11 +2186,14 @@ size_t hw_get_ble_message(char *buffer, size_t buffer_size)
     return 0;
 }
 
+// [PURE] Constant string. Must be kept in step with the name set in
+// hw_set_ble_kb_enable() below -- nothing enforces that.
 const char  *hw_get_ble_kb_name()
 {
     return "Keyboard";
 }
 
+// [REAL] Real BLE HID peripheral, on boards flagged USING_BLE_KEYBOARD. [INERT] elsewhere.
 void hw_set_ble_kb_enable()
 {
 #if defined(ARDUINO) && defined(USING_BLE_KEYBOARD)
@@ -2022,6 +2204,8 @@ void hw_set_ble_kb_enable()
 #endif
 }
 
+// [REAL] on USING_BLE_KEYBOARD boards. Note this one is not additionally guarded by
+// CONFIG_BLE_KEYBOARD, unlike every sibling in this family.
 void hw_set_ble_kb_disable()
 {
 #if defined(ARDUINO) && defined(USING_BLE_KEYBOARD)
@@ -2030,6 +2214,7 @@ void hw_set_ble_kb_disable()
 #endif
 }
 
+// [REAL] Real HID text report when a central is connected. [INERT] elsewhere.
 void hw_set_ble_kb_char(const char *c)
 {
 #if defined(ARDUINO) && defined(USING_BLE_KEYBOARD)
@@ -2041,6 +2226,7 @@ void hw_set_ble_kb_char(const char *c)
 #endif
 }
 
+// [REAL] Real HID key-press report. [INERT] elsewhere.
 void hw_set_ble_kb_key(uint8_t key)
 {
 #if defined(ARDUINO) && defined(USING_BLE_KEYBOARD)
@@ -2052,6 +2238,7 @@ void hw_set_ble_kb_key(uint8_t key)
 #endif
 }
 
+// [REAL] Real HID release-all report. [INERT] elsewhere.
 void hw_set_ble_kb_release()
 {
 #if defined(ARDUINO) && defined(USING_BLE_KEYBOARD)
@@ -2063,6 +2250,7 @@ void hw_set_ble_kb_release()
 #endif
 }
 
+// [REAL] Real link state on USING_BLE_KEYBOARD boards. [SIM] elsewhere: constant false.
 bool hw_get_ble_kb_connected()
 {
 #if defined(ARDUINO) && defined(USING_BLE_KEYBOARD)
@@ -2075,6 +2263,7 @@ bool hw_get_ble_kb_connected()
     return false;
 }
 
+// [REAL] Real HID consumer-control (media) reports. [INERT] elsewhere.
 void hw_set_ble_key(media_key_value_t key)
 {
 #if defined(ARDUINO) && defined(USING_BLE_KEYBOARD)
@@ -2104,6 +2293,8 @@ void hw_set_ble_key(media_key_value_t key)
 #endif
 }
 
+// [REAL] on keyboard boards. [INERT] on emulator, where key input reaches LVGL
+// through the SDL driver instead and this callback is simply dropped.
 void hw_set_keyboard_read_callback(void(*read)(int state, char &c))
 {
 #if defined(ARDUINO) && defined(USING_INPUT_DEV_KEYBOARD)
@@ -2111,6 +2302,7 @@ void hw_set_keyboard_read_callback(void(*read)(int state, char &c))
 #endif
 }
 
+// [REAL] Real vibration motor. [INERT] on emulator -- silent, with no visual stand-in.
 void hw_feedback()
 {
 #ifdef ARDUINO
@@ -2126,6 +2318,8 @@ void hw_feedback()
  * timers, WiFi and the RTC keep running. Any configured wake source (touch, a
  * key, the PMU IRQ) ends the sleep.
  */
+// [REAL] on hardware -- a real light sleep that blocks until a wake source fires.
+// [INERT] on emulator: returns immediately, so the idle loop spins at full speed.
 void hw_low_power_loop()
 {
 #ifdef ARDUINO
@@ -2136,6 +2330,7 @@ void hw_low_power_loop()
 #endif
 }
 
+// [REAL] on hardware. [INERT] on emulator.
 void hw_inc_brightness(uint8_t level)
 {
 #ifdef ARDUINO
@@ -2143,6 +2338,7 @@ void hw_inc_brightness(uint8_t level)
 #endif
 }
 
+// [REAL] on hardware. [INERT] on emulator.
 void hw_dec_brightness(uint8_t level)
 {
 #ifdef ARDUINO
@@ -2150,6 +2346,8 @@ void hw_dec_brightness(uint8_t level)
 #endif
 }
 
+// [PURE] Compile-time board constants from dev_conts_var; identical on both platforms.
+// The six accessors below are all in this category.
 uint8_t hw_get_disp_min_brightness()
 {
     return dev_conts_var.min_brightness;
@@ -2180,6 +2378,7 @@ uint8_t hw_get_charge_steps()
     return dev_conts_var.charge_steps;
 }
 
+// [REAL] on hardware -- really rescales the CPU clock. [INERT] on emulator.
 void hw_set_cpu_freq(uint32_t mhz)
 {
 #ifdef ARDUINO
@@ -2187,6 +2386,7 @@ void hw_set_cpu_freq(uint32_t mhz)
 #endif
 }
 
+// [REAL] on rotary-encoder boards. [INERT] elsewhere.
 void hw_disable_input_devices()
 {
 #if defined(ARDUINO) && defined(USING_INPUT_DEV_ROTARY)
@@ -2195,6 +2395,7 @@ void hw_disable_input_devices()
 }
 
 
+// [REAL] on rotary-encoder boards. [INERT] elsewhere.
 void hw_enable_input_devices()
 {
 #if defined(ARDUINO) && defined(USING_INPUT_DEV_ROTARY)
@@ -2202,6 +2403,8 @@ void hw_enable_input_devices()
 #endif
 }
 
+// [DEAD] Guarded by ARDUINO_T_DECK_V2, which no env in platformio.ini defines --
+// so on all three boards in this repo, and on the emulator, this is a no-op.
 void hw_enable_keyboard()
 {
 #if defined(ARDUINO) && defined(ARDUINO_T_DECK_V2)
@@ -2209,6 +2412,7 @@ void hw_enable_keyboard()
 #endif
 }
 
+// [DEAD] ARDUINO_T_DECK_V2 only; see above.
 void hw_disable_keyboard()
 {
 #if defined(ARDUINO) && defined(ARDUINO_T_DECK_V2)
@@ -2217,6 +2421,7 @@ void hw_disable_keyboard()
 }
 
 
+// [REAL] on keyboard boards. [INERT] elsewhere.
 void hw_flush_keyboard()
 {
 #if defined(ARDUINO) && defined(USING_INPUT_DEV_KEYBOARD)
@@ -2226,16 +2431,22 @@ void hw_flush_keyboard()
 #endif
 }
 
+// [DERIVED] Reads the hw_get_device_online() bitmask -- so [REAL] on hardware and
+// [SIM] on the emulator, inheriting whatever that function fabricates.
 bool hw_has_keyboard()
 {
     return hw_get_device_online() & HW_KEYBOARD_ONLINE;
 }
 
+// [DERIVED] Same as above: [REAL] on hardware, [SIM] on emulator. The emulator's
+// fake bitmask omits HW_LED_INDIC_ONLINE, so this always reports false there.
 bool hw_has_indicator_led()
 {
     return hw_get_device_online() & HW_LED_INDIC_ONLINE;
 }
 
+// [STUB] Both arms of the #if return true, on every board and on the emulator --
+// the conditional is inert and this never actually reports "no OTG".
 bool hw_has_otg_function()
 {
 #if defined(USING_PPM_MANAGE)
@@ -2248,6 +2459,7 @@ bool hw_has_otg_function()
 #if defined(ARDUINO)
 #include <Esp.h>
 #endif
+// [REAL] Real ESP heap/PSRAM figures. [INERT] on emulator: prints nothing at all.
 void hw_print_mem_info()
 {
 #if defined(ARDUINO)
@@ -2281,6 +2493,7 @@ IRsend irsend(IR_SEND); // T-Watch S3 GPIO2 pin to use.
 IRrecv irrecv(IR_SEND); // T-Watch S3 GPIO15 pin to use.
 #endif
 
+// [REAL] Real NEC frame out of the IR LED. [INERT] on boards without USING_IR_REMOTE.
 void hw_set_remote_code(uint32_t nec_code)
 {
 #if defined(ARDUINO) && defined(USING_IR_REMOTE)
@@ -2293,6 +2506,10 @@ void hw_set_remote_code(uint32_t nec_code)
 #endif
 }
 
+// [REAL] on boards with an IR receiver.
+// [SIM] otherwise -- and this #else is NOT emulator-only: any hardware build without
+// USING_IR_RECEIVER also lands here and returns random(0, INT_MAX), i.e. the UI shows
+// a stream of invented "received" codes rather than nothing.
 void hw_get_remote_code(uint64_t &result)
 {
 #if defined(ARDUINO) && defined(USING_IR_RECEIVER)
@@ -2308,6 +2525,7 @@ void hw_get_remote_code(uint64_t &result)
 #endif
 }
 
+// [REAL] Real RF-path switch between the IR transmitter and receiver. [INERT] elsewhere.
 void hw_ir_function_select(bool enableSend)
 {
 #if defined(ARDUINO) && defined(USING_IR_REMOTE) && defined(USING_IR_RECEIVER)
@@ -2322,6 +2540,7 @@ void hw_ir_function_select(bool enableSend)
 }
 
 #ifdef USING_MAG_QMC5883
+// [REAL] on hardware -- real QMC5883P configuration. [INERT] on emulator.
 void hw_mag_enable(bool enable)
 {
 #ifdef ARDUINO
@@ -2338,6 +2557,9 @@ void hw_mag_enable(bool enable)
 #endif // ARDUINO
 }
 
+// [REAL] on hardware -- a real magnetometer heading.
+// [SIM] on emulator: a heading that sweeps +0.5 deg per call, wrapping at 360, so the
+// compass rotates steadily regardless of anything the user does.
 float hw_mag_get_polar()
 {
 #ifdef ARDUINO
@@ -2357,6 +2579,7 @@ float hw_mag_get_polar()
 
 #ifdef USING_BME280
 
+// [REAL] on hardware. [INERT] on emulator.
 void hw_bme_enable(bool enable)
 {
 #ifdef ARDUINO
@@ -2373,6 +2596,10 @@ void hw_bme_enable(bool enable)
 }
 
 
+// [REAL] on hardware -- real BME280 temperature/humidity/pressure/altitude.
+// [SIM] on emulator: independent random values per call (temp 0..25 C, humidity
+// 40..95 %, pressure 1000..1200 hPa, altitude 20..60 m) -- they jitter rather than
+// drift, and pressure and altitude are unrelated to each other.
 void hw_bme_get_data(float &temp, float &humi, float &press, float &alt)
 {
 #ifdef ARDUINO
@@ -2401,6 +2628,7 @@ static TrackballEventCallback _trackball_cb = NULL;
 static ButtonEventCallback    _button_cb = NULL;
 
 
+// [REAL] Real trackball motion event from LilyGoLib. Arduino + USING_TRACKBALL only.
 static void trackballEventCallback(DeviceEvent_t event, void *params, void *user_data)
 {
     if (_trackball_cb && params) {
@@ -2409,6 +2637,7 @@ static void trackballEventCallback(DeviceEvent_t event, void *params, void *user
     }
 }
 
+// [REAL] Real button event from LilyGoLib. Arduino + USING_TRACKBALL only.
 static void buttonEventCallback(DeviceEvent_t event, void *params, void *user_data)
 {
     if (_button_cb && params) {
@@ -2419,6 +2648,8 @@ static void buttonEventCallback(DeviceEvent_t event, void *params, void *user_da
 
 #endif
 
+// [REAL] on trackball boards. [INERT] elsewhere: the callback is accepted and
+// silently discarded, so it never fires.
 void hw_set_trackball_callback(TrackballEventCallback callback)
 {
 #if defined(ARDUINO) && defined(USING_TRACKBALL)
@@ -2433,6 +2664,7 @@ void hw_set_trackball_callback(TrackballEventCallback callback)
 #endif
 }
 
+// [REAL] on trackball boards (the button events share that guard). [INERT] elsewhere.
 void hw_set_button_callback(ButtonEventCallback callback)
 {
 #if defined(ARDUINO) && defined(USING_TRACKBALL)
@@ -2446,6 +2678,7 @@ void hw_set_button_callback(ButtonEventCallback callback)
 #endif
 }
 
+// [PURE] Static help text chosen by board type; no hardware on either platform.
 const char *hw_get_device_power_tips_string()
 {
 #if defined(USING_PPM_MANAGE)
@@ -2469,6 +2702,8 @@ const char *hw_get_device_power_tips_string()
  * the system-info app. The buffer is a function-local static: the returned
  * pointer stays valid but is overwritten by the next call.
  */
+// [REAL] on hardware -- the genuine MD5 of the flashed app partition.
+// [SIM] on emulator: the literal "DummyHashString".
 const char *hw_get_firmware_hash_string()
 {
 #ifdef ARDUINO
@@ -2488,6 +2723,8 @@ const char *hw_get_firmware_hash_string()
  * The 64-bit value holds a 48-bit MAC, hence printing the top 16 bits and the
  * low 32 bits separately.
  */
+// [REAL] on hardware -- derived from the immutable eFuse MAC.
+// [SIM] on emulator: the literal "DummyChipIDString".
 const char *hw_get_chip_id_string()
 {
 #ifdef ARDUINO
@@ -2508,6 +2745,7 @@ const char *hw_get_chip_id_string()
  *
  * @param to_usb  true routes the path to the USB-side connector, false to the radio
  */
+// [REAL] on boards with an RF switch (T-Watch-Ultra). [INERT] elsewhere.
 void hw_set_usb_rf_switch(bool to_usb)
 {
 #ifdef ARDUINO
@@ -2518,6 +2756,8 @@ void hw_set_usb_rf_switch(bool to_usb)
 }
 
 
+// [DEAD] ARDUINO_T_DECK_V2 only -- not defined by any env in this repo, so this is
+// a no-op on all three boards and on the emulator.
 void hw_set_audio_effect_3d(bool enable)
 {
 #if defined(ARDUINO) && defined(ARDUINO_T_DECK_V2)
@@ -2525,6 +2765,7 @@ void hw_set_audio_effect_3d(bool enable)
 #endif
 }
 
+// [DEAD] ARDUINO_T_DECK_V2 only; see above.
 void hw_set_audio_effect_ab_class(bool enable)
 {
 #if defined(ARDUINO) && defined(ARDUINO_T_DECK_V2)

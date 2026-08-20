@@ -2,24 +2,15 @@
  * @file      settings_widgets.cpp
  * @license   MIT
  * @brief     Settings row factories. See settings_widgets.h.
+ *
+ * Every label on the page is APP_FONT_BODY: rows are read at arm's length on
+ * a wrist and the LVGL theme's default is sized for a desktop, and using the
+ * same body face as gb_ui.cpp keeps the settings page and the Gadgetbridge
+ * screens reading at one size.
  */
 #include "settings_widgets.h"
 
 #include "../app_config.h"
-
-namespace
-{
-
-/// Rows are read at arm's length on a wrist; the theme's default is sized for
-/// a desktop. One font for the whole page, chosen from the panel like
-/// gb_ui.cpp does.
-const lv_font_t *rowFont()
-{
-    return lv_display_get_horizontal_resolution(NULL) <= 320 ? &lv_font_montserrat_14
-                                                             : &lv_font_montserrat_18;
-}
-
-} // namespace
 
 lv_obj_t *settings_row(lv_obj_t *parent, const char *symbol, const char *text, bool stacked)
 {
@@ -35,14 +26,14 @@ lv_obj_t *settings_row(lv_obj_t *parent, const char *symbol, const char *text, b
         // font, which needs no asset and scales with the text.
         icon = lv_label_create(row);
         lv_label_set_text(icon, symbol);
-        lv_obj_set_style_text_font(icon, rowFont(), 0);
+        lv_obj_set_style_text_font(icon, APP_FONT_BODY, 0);
     }
 
     if (text) {
         label = lv_label_create(row);
         lv_label_set_text(label, text);
         lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
-        lv_obj_set_style_text_font(label, rowFont(), 0);
+        lv_obj_set_style_text_font(label, APP_FONT_BODY, 0);
         lv_obj_set_flex_grow(label, 1);
     }
 
@@ -102,7 +93,7 @@ lv_obj_t *settings_button(lv_obj_t *parent, const char *symbol, const char *text
     }
     lv_obj_t *label = lv_label_create(button);
     lv_label_set_text(label, button_text);
-    lv_obj_set_style_text_font(label, rowFont(), 0);
+    lv_obj_set_style_text_font(label, APP_FONT_BODY, 0);
     lv_obj_center(label);
     return button;
 }
@@ -114,7 +105,7 @@ lv_obj_t *settings_value(lv_obj_t *parent, const char *symbol, const char *text,
 
     lv_obj_t *label = lv_label_create(row);
     lv_label_set_text(label, value ? value : "");
-    lv_obj_set_style_text_font(label, rowFont(), 0);
+    lv_obj_set_style_text_font(label, APP_FONT_BODY, 0);
     lv_obj_set_style_text_color(label, lv_palette_main(LV_PALETTE_GREY), 0);
     return label;
 }
@@ -123,8 +114,8 @@ lv_obj_t *settings_section(lv_obj_t *parent, const char *text)
 {
     lv_obj_t *label = lv_label_create(parent);
     lv_label_set_text(label, text);
-    lv_obj_set_style_text_font(label, rowFont(), 0);
+    lv_obj_set_style_text_font(label, APP_FONT_BODY, 0);
     lv_obj_set_style_text_color(label, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_set_style_pad_top(label, 10, 0);
+    lv_obj_set_style_pad_top(label, APP_SETTINGS_SECTION_PAD_TOP, 0);
     return label;
 }

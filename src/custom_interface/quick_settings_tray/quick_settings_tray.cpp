@@ -6,15 +6,14 @@
 #include "quick_settings_tray.h"
 
 #include "quick_settings_tray_hal.h"
+#include "../app_config.h"
 #include <usable_area.h>
 
 namespace
 {
 
-constexpr int32_t QST_TRAY_HEIGHT       = 230;
-constexpr int32_t QST_HEADER_HEIGHT     = 110;
-constexpr int32_t QST_BRIGHTNESS_HEIGHT = 70;
-constexpr int32_t QST_FOOTER_HEIGHT     = 50;
+/// How long the tray takes to slide in or out. Not a size, so it stays here
+/// rather than in app_config.h with APP_QST_TRAY_HEIGHT and the band heights.
 constexpr uint32_t QST_ANIM_DURATION_MS = 220;
 
 /// Mirrors the three-way state a bool can't represent cleanly: an in-flight
@@ -43,8 +42,6 @@ lv_obj_t *s_brightness_pct_label = nullptr;
 lv_obj_t *s_settings_button = nullptr;
 
 QstAction s_action = nullptr;       ///< NULL: no gear shown
-
-void quick_settings_tray_close(void);
 
 void settingsClickCb(lv_event_t *e)
 {
@@ -145,7 +142,7 @@ void brightnessSliderCb(lv_event_t *e)
 lv_obj_t *makeBand(lv_obj_t *tray, int32_t y, int32_t height)
 {
     // usable_area_place() can return NULL for a band entirely inside the
-    // bezel -- not expected for anything inside a 230px tray dropped from
+    // bezel -- not expected for anything inside a 230 px tray dropped from
     // the top of a 502px-tall Ultra panel, but fall back to the tray itself
     // rather than crash if the geometry ever changes.
     lv_obj_t *band = usable_area_place(tray, y, height);
@@ -154,7 +151,7 @@ lv_obj_t *makeBand(lv_obj_t *tray, int32_t y, int32_t height)
 
 void buildHeader(lv_obj_t *tray)
 {
-    lv_obj_t *band = makeBand(tray, 0, QST_HEADER_HEIGHT);
+    lv_obj_t *band = makeBand(tray, 0, APP_QST_HEADER_HEIGHT);
     lv_obj_set_flex_flow(band, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(band, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -166,12 +163,12 @@ void buildHeader(lv_obj_t *tray)
 
     s_time_label = lv_label_create(time_col);
     lv_obj_set_style_text_color(s_time_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(s_time_label, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_font(s_time_label, APP_FONT_QST_TIME, 0);
     lv_label_set_text(s_time_label, "--:--");
 
     s_date_label = lv_label_create(time_col);
     lv_obj_set_style_text_color(s_date_label, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_text_font(s_date_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_date_label, APP_FONT_QST_DATE, 0);
     lv_label_set_text(s_date_label, "");
 
     lv_obj_t *batt_col = lv_obj_create(band);
@@ -179,26 +176,26 @@ void buildHeader(lv_obj_t *tray)
     lv_obj_set_size(batt_col, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(batt_col, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(batt_col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(batt_col, 4, 0);
+    lv_obj_set_style_pad_row(batt_col, APP_QST_BATT_COL_GAP, 0);
 
     s_batt_icon = lv_label_create(batt_col);
     lv_obj_set_style_text_color(s_batt_icon, lv_color_white(), 0);
-    lv_obj_set_style_text_font(s_batt_icon, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(s_batt_icon, APP_FONT_QST_ICON, 0);
     lv_label_set_text(s_batt_icon, LV_SYMBOL_BATTERY_FULL);
 
     s_batt_bar = lv_bar_create(batt_col);
-    lv_obj_set_size(s_batt_bar, 80, 12);
+    lv_obj_set_size(s_batt_bar, APP_QST_BATT_BAR_WIDTH, APP_QST_BATT_BAR_HEIGHT);
     lv_bar_set_range(s_batt_bar, 0, 100);
 
     s_batt_pct_label = lv_label_create(batt_col);
     lv_obj_set_style_text_color(s_batt_pct_label, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_text_font(s_batt_pct_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_batt_pct_label, APP_FONT_QST_VALUE, 0);
     lv_label_set_text(s_batt_pct_label, "--%");
 }
 
 void buildBrightnessRow(lv_obj_t *tray)
 {
-    lv_obj_t *band = makeBand(tray, QST_HEADER_HEIGHT, QST_BRIGHTNESS_HEIGHT);
+    lv_obj_t *band = makeBand(tray, APP_QST_HEADER_HEIGHT, APP_QST_BRIGHTNESS_HEIGHT);
     lv_obj_set_flex_flow(band, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(band, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -206,29 +203,30 @@ void buildBrightnessRow(lv_obj_t *tray)
     // symbol is the closest stand-in for "the display" among what exists.
     lv_obj_t *icon = lv_label_create(band);
     lv_obj_set_style_text_color(icon, lv_color_white(), 0);
-    lv_obj_set_style_text_font(icon, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(icon, APP_FONT_QST_ICON, 0);
     lv_label_set_text(icon, LV_SYMBOL_IMAGE);
 
     s_brightness_slider = lv_slider_create(band);
-    lv_obj_set_width(s_brightness_slider, LV_PCT(50));
+    lv_obj_set_width(s_brightness_slider, LV_PCT(APP_QST_SLIDER_WIDTH_PCT));
     lv_slider_set_range(s_brightness_slider, qst_hal_brightness_min(), qst_hal_brightness_max());
     lv_obj_add_event_cb(s_brightness_slider, brightnessSliderCb, LV_EVENT_VALUE_CHANGED, NULL);
 
     s_brightness_pct_label = lv_label_create(band);
     lv_obj_set_style_text_color(s_brightness_pct_label, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_text_font(s_brightness_pct_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_brightness_pct_label, APP_FONT_QST_VALUE, 0);
     lv_label_set_text(s_brightness_pct_label, "--%");
 }
 
 void buildFooter(lv_obj_t *tray)
 {
-    lv_obj_t *band = makeBand(tray, QST_HEADER_HEIGHT + QST_BRIGHTNESS_HEIGHT, QST_FOOTER_HEIGHT);
+    lv_obj_t *band = makeBand(tray, APP_QST_HEADER_HEIGHT + APP_QST_BRIGHTNESS_HEIGHT,
+                              APP_QST_FOOTER_HEIGHT);
     lv_obj_set_flex_flow(band, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(band, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     lv_obj_t *grabber = lv_label_create(band);
     lv_obj_set_style_text_color(grabber, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_text_font(grabber, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(grabber, APP_FONT_QST_ICON, 0);
     lv_label_set_text(grabber, LV_SYMBOL_UP);
     lv_obj_add_flag(grabber, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(grabber, grabberClickCb, LV_EVENT_CLICKED, NULL);
@@ -240,14 +238,16 @@ void buildFooter(lv_obj_t *tray)
     s_settings_button = lv_label_create(band);
     lv_obj_add_flag(s_settings_button, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_obj_set_style_text_color(s_settings_button, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_text_font(s_settings_button, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(s_settings_button, APP_FONT_QST_ICON, 0);
     lv_label_set_text(s_settings_button, LV_SYMBOL_SETTINGS);
-    lv_obj_align(s_settings_button, LV_ALIGN_RIGHT_MID, -8, 0);
-    lv_obj_set_ext_click_area(s_settings_button, 12);
+    lv_obj_align(s_settings_button, LV_ALIGN_RIGHT_MID, -APP_QST_GEAR_PAD_RIGHT, 0);
+    lv_obj_set_ext_click_area(s_settings_button, APP_QST_GEAR_EXT_CLICK);
     lv_obj_add_flag(s_settings_button, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_settings_button, settingsClickCb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_settings_button, LV_OBJ_FLAG_HIDDEN);   // until an action is set
 }
+
+} // namespace
 
 void quick_settings_tray_close(void)
 {
@@ -260,7 +260,7 @@ void quick_settings_tray_close(void)
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_tray);
-    lv_anim_set_values(&a, lv_obj_get_y(s_tray), -QST_TRAY_HEIGHT);
+    lv_anim_set_values(&a, lv_obj_get_y(s_tray), -APP_QST_TRAY_HEIGHT);
     lv_anim_set_duration(&a, QST_ANIM_DURATION_MS);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
     lv_anim_set_exec_cb(&a, trayAnimYCb);
@@ -270,7 +270,10 @@ void quick_settings_tray_close(void)
     lv_indev_wait_release(lv_indev_active());
 }
 
-} // namespace
+bool quick_settings_tray_is_open(void)
+{
+    return s_state == QST_OPEN || s_state == QST_OPENING;
+}
 
 void quick_settings_tray_init(void)
 {
@@ -291,8 +294,8 @@ void quick_settings_tray_init(void)
 
     s_tray = lv_obj_create(top);
     lv_obj_remove_flag(s_tray, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(s_tray, w, QST_TRAY_HEIGHT);
-    lv_obj_set_pos(s_tray, 0, -QST_TRAY_HEIGHT);
+    lv_obj_set_size(s_tray, w, APP_QST_TRAY_HEIGHT);
+    lv_obj_set_pos(s_tray, 0, -APP_QST_TRAY_HEIGHT);
     lv_obj_set_style_bg_color(s_tray, lv_color_hex(0x1c1c1c), 0);
     lv_obj_set_style_bg_opa(s_tray, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_tray, 0, 0);

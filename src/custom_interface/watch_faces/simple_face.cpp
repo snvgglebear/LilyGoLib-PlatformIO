@@ -6,15 +6,17 @@
  * Ported from TTGO_TWatch_Library examples/LVGL/SimpleWatch.
  *
  * The original was written for a 240x240 TFT with LVGL 6 and hardcoded pixel
- * positions throughout. That does not survive the move to a 502x410 panel, so
- * this is rebuilt with LVGL 9 flex layout and percentage sizing: the same source
- * lays out correctly on both watches without per-board coordinates.
+ * positions throughout. That does not survive the move to the Ultra's 410x502
+ * panel, so this is rebuilt with LVGL 9 flex layout and percentage sizing,
+ * laid out relative to the usable area rather than in absolute coordinates.
  *
  * Shows time, date, battery and charge state, all driven from the RTC and PMU
  * rather than millis(), so it stays correct across sleep.
  */
 
 #include "simple_face.h"
+
+#include "../app_config.h"
 
 #include <usable_area.h>
 
@@ -53,41 +55,35 @@ static void build_face(lv_obj_t *screen)
     // Column layout with the clock centred and the battery row pinned bottom.
     lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(scr, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(scr, 8, 0);
-
-    // Font size is the one thing that genuinely differs between a 240px and a
-    // 502px wide panel, so choose it from the actual resolution.
-    bool small = lv_display_get_horizontal_resolution(NULL) <= 400;
+    lv_obj_set_style_pad_row(scr, APP_FACE_PAD_ROW, 0);
 
     label_time = lv_label_create(scr);
     lv_obj_set_style_text_color(label_time, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label_time,
-                               small ? &lv_font_montserrat_48 : &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(label_time, APP_FONT_FACE_TIME, 0);
     lv_label_set_text(label_time, "--:--");
     /*48px is the largest bitmap font LVGL ships, so scale the label itself
-      2x for bigger digits. Scaling is draw-time only -- flex still reserves
-      just the label's unscaled box -- so give it matching margin above and
-      below or the enlarged render crowds label_date beneath it. Pivots
-      around the label's own center by default, which flex already
+      by APP_FACE_TIME_SCALE for bigger digits. Scaling is draw-time only --
+      flex still reserves just the label's unscaled box -- so give it matching
+      margin above and below or the enlarged render crowds label_date beneath
+      it. Pivots around the label's own center by default, which flex already
       horizontally centers, so no extra alignment is needed.*/
-    lv_obj_set_style_transform_scale(label_time, 2 * LV_SCALE_NONE, 0);
-    lv_obj_set_style_margin_top(label_time, 24, 0);
-    lv_obj_set_style_margin_bottom(label_time, 24, 0);
+    lv_obj_set_style_transform_scale(label_time, APP_FACE_TIME_SCALE * LV_SCALE_NONE, 0);
+    lv_obj_set_style_margin_top(label_time, APP_FACE_TIME_MARGIN, 0);
+    lv_obj_set_style_margin_bottom(label_time, APP_FACE_TIME_MARGIN, 0);
 
     label_date = lv_label_create(scr);
     lv_obj_set_style_text_color(label_date, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_text_font(label_date,
-                               small ? &lv_font_montserrat_14 : &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(label_date, APP_FONT_FACE_DATE, 0);
     lv_label_set_text(label_date, "");
 
     bar_batt = lv_bar_create(scr);
-    lv_obj_set_size(bar_batt, LV_PCT(50), small ? 12 : 20);
+    lv_obj_set_size(bar_batt, LV_PCT(APP_FACE_BATT_BAR_WIDTH_PCT),
+                    APP_FACE_BATT_BAR_HEIGHT);
     lv_bar_set_range(bar_batt, 0, 100);
 
     label_batt = lv_label_create(scr);
     lv_obj_set_style_text_color(label_batt, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_text_font(label_batt,
-                               small ? &lv_font_montserrat_14 : &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(label_batt, APP_FONT_FACE_BATT, 0);
     lv_label_set_text(label_batt, "");
 }
 

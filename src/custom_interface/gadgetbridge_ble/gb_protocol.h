@@ -96,12 +96,12 @@ struct GbWeather {
  * is independently optional; the has_* flags say which ones the phone
  * actually sent, so a partial update only touches what changed.
  *
- * The wire spec (.claude/twatch-ultra-ble-protocol.md §5.14/§6.8) also has
- * `pinned_mask` and `low_batt_pct`, for a pinned-apps set and a low-battery
- * warning threshold. Neither exists as a watch setting in this app yet, so
- * this struct -- and the dispatcher and the echo builder below -- do not
- * carry them; per §10 ("both sides ignore what they do not recognise") a
- * phone that sends them today simply gets no effect, not an error.
+ * `pinned_mask`, `low_batt_pct` and `lora_enabled` are carried but currently
+ * have no consumer on the watch -- the handler stores them and the echo
+ * sends them back so Gadgetbridge's own preferences round-trip, but nothing
+ * this app does today acts on their value. See
+ * plans/settings-sync-delta-plan.md §2 for why pass-through and not silent
+ * drop.
  */
 struct GbSettings {
     bool has_notif_timeout_ms = false;
@@ -112,6 +112,15 @@ struct GbSettings {
 
     bool has_clock_mode = false;
     std::string clock_mode;         ///< "digital" | "analog"; unrecognised values are ignored
+
+    bool has_pinned_mask = false;
+    uint32_t pinned_mask = 0;       ///< bitmask; no watch consumer yet
+
+    bool has_low_batt_pct = false;
+    int32_t low_batt_pct = 0;       ///< percent; handler clamps to [5, 50]
+
+    bool has_lora_enabled = false;
+    bool lora_enabled = false;      ///< no watch consumer yet
 };
 
 /**
@@ -230,6 +239,10 @@ std::string gb_msg_toast(const char *level, const std::string &message);
 /// §6.8 `settings` echo -- always the full effective state (never partial),
 /// so one message is enough for the phone to repaint its settings screen
 /// regardless of which side a change came from. @p clock_mode is "digital" or
-/// "analog". See GbSettings for why `pinned_mask`/`low_batt_pct` aren't here.
+/// "analog". @p pinned_mask, @p low_batt_pct and @p lora_enabled are echoed
+/// verbatim from the persisted store -- see GbSettings for why the watch
+/// carries them without yet acting on them.
 std::string gb_msg_settings(int32_t notif_timeout_ms, bool notif_vibrate,
-                            const std::string &clock_mode);
+                            const std::string &clock_mode,
+                            uint32_t pinned_mask, int32_t low_batt_pct,
+                            bool lora_enabled);
