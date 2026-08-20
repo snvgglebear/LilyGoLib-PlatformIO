@@ -2,4 +2,5 @@
 .vscode
 build
 .ino.cpp
-.bin
+*.bin
+custom_interface_settings.bin
