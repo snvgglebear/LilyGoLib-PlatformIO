@@ -19,6 +19,7 @@
 
 #include "app_settings.h"
 #include "settings_widgets.h"
+#include "wifi_page.h"
 
 #include "../app_config.h"
 #include "../gadgetbridge_ble/gb_app.h"
@@ -27,6 +28,7 @@
 #include "../quick_settings_tray/quick_settings_tray.h"
 #include "../quick_settings_tray/quick_settings_tray_hal.h"
 #include "../screen_state/screen_state.h"
+#include "../wifi/wifi_service.h"
 #include "../watch_faces/face_registry.h"
 
 #include <usable_area.h>
@@ -47,6 +49,7 @@ lv_obj_t *s_return_to = nullptr;   ///< screen that was active when we opened
 /// Live rows on the System Info page, refreshed by s_info_timer.
 lv_obj_t *s_info_battery = nullptr;
 lv_obj_t *s_info_link = nullptr;
+lv_obj_t *s_info_wifi = nullptr;
 lv_obj_t *s_info_heap = nullptr;
 lv_timer_t *s_info_timer = nullptr;
 
@@ -68,6 +71,15 @@ void refreshInfo(lv_timer_t *timer)
     if (s_info_link) {
         lv_label_set_text(s_info_link, gb_link_connected() ? "connected" : "advertising");
     }
+    if (s_info_wifi) {
+        const char *ssid = wifi_service_ssid();
+        if (ssid[0]) {
+            snprintf(buf, sizeof(buf), "%s  %s", ssid, wifi_service_ip());
+            lv_label_set_text(s_info_wifi, buf);
+        } else {
+            lv_label_set_text(s_info_wifi, wifi_service_status_text());
+        }
+    }
     if (s_info_heap) {
 #ifdef ARDUINO
         snprintf(buf, sizeof(buf), "%u KB", (unsigned)(ESP.getFreeHeap() / 1024));
@@ -87,7 +99,7 @@ void stopInfoTimer()
         lv_timer_delete(s_info_timer);
         s_info_timer = nullptr;
     }
-    s_info_battery = s_info_link = s_info_heap = nullptr;
+    s_info_battery = s_info_link = s_info_heap = s_info_wifi = nullptr;
 }
 
 // -- Watch Face page -------------------------------------------------------
@@ -189,6 +201,11 @@ void restoreConfirmed(lv_event_t *e)
 {
     lv_msgbox_close(lv_obj_get_parent(lv_obj_get_parent((lv_obj_t *)lv_event_get_current_target(e))));
     app_settings_restore_defaults();
+    /*The radio is not in applyAll(): pushing it from there would have
+      app_settings_begin() bring Wi-Fi up before wifi_service_begin() has loaded
+      the credentials it would need. So restoring the *setting* leaves the radio
+      as it was, and this is what actually makes the two agree again.*/
+    wifi_service_set_enabled(app_settings().wifi_enabled != 0);
     gb_app.reportSettingsChanged();   // §6.8: defaults touch all three echoed fields
     buildMenu();    // the old rows are showing the old values
 }
@@ -199,8 +216,9 @@ void restoreClicked(lv_event_t *e)
     lv_obj_t *box = lv_msgbox_create(NULL);
     lv_obj_set_width(box, usable_area_screen_width() - 2 * SAFE_INSET);
     lv_msgbox_add_title(box, "Restore defaults?");
-    lv_msgbox_add_text(box, "Brightness, timeout, watch face and notification "
-                            "settings all go back to their defaults.");
+    lv_msgbox_add_text(box, "Brightness, timeout, watch face, Wi-Fi and "
+                            "notification settings all go back to their "
+                            "defaults. The saved Wi-Fi network is kept.");
     lv_obj_add_event_cb(lv_msgbox_add_footer_button(box, "Restore"), restoreConfirmed,
                         LV_EVENT_CLICKED, NULL);
     lv_msgbox_add_close_button(box);
@@ -246,10 +264,10 @@ void buildDisplayPage(lv_obj_t *page)
 
 void buildWatchFacePage(lv_obj_t *page)
 {
-    s_face_analog_sw = settings_switch(page, LV_SYMBOL_SETTINGS, "Analog face",
+    s_face_analog_sw = settings_checkbox(page, LV_SYMBOL_SETTINGS, "Analog face",
                                        watch_face_current() == WATCH_FACE_ANALOG,
                                        analogFaceChanged, NULL);
-    s_face_digital_sw = settings_switch(page, LV_SYMBOL_SETTINGS, "Digital face",
+    s_face_digital_sw = settings_checkbox(page, LV_SYMBOL_SETTINGS, "Digital face",
                                         watch_face_current() == WATCH_FACE_DIGITAL,
                                         digitalFaceChanged, NULL);
     s_face_current = settings_value(page, NULL, "Showing",
@@ -272,9 +290,9 @@ void buildNotificationsPage(lv_obj_t *page)
     lv_slider_set_value(popup_slider, s.notif_popup_ms, LV_ANIM_OFF);
     lv_obj_add_event_cb(popup_slider, popupDurationChanged, LV_EVENT_VALUE_CHANGED, popup_label);
 
-    settings_switch(page, LV_SYMBOL_BELL, "Vibrate: messages", s.vibrate_messages != 0,
+    settings_checkbox(page, LV_SYMBOL_BELL, "Vibrate: messages", s.vibrate_messages != 0,
                     vibrateMessagesChanged, NULL);
-    settings_switch(page, LV_SYMBOL_CALL, "Vibrate: calls/alarms", s.vibrate_alerts != 0,
+    settings_checkbox(page, LV_SYMBOL_CALL, "Vibrate: calls/alarms", s.vibrate_alerts != 0,
                     vibrateAlertsChanged, NULL);
 }
 
@@ -284,6 +302,7 @@ void buildInfoPage(lv_obj_t *page)
     settings_value(page, NULL, "Board", gb_platform::hardwareName());
     settings_value(page, NULL, "BLE name", gb_link_device_name());
     s_info_link    = settings_value(page, NULL, "Link", "--");
+    s_info_wifi    = settings_value(page, NULL, "Wi-Fi", "--");
     s_info_battery = settings_value(page, NULL, "Battery", "--");
     settings_value(page, NULL, "LVGL", lv_version_info());
     settings_value(page, NULL, "Built", __DATE__ " " __TIME__);
@@ -326,6 +345,7 @@ void menuClicked(lv_event_t *e)
 void buildMenu()
 {
     stopInfoTimer();
+    settings_wifi_page_stop();
     s_face_analog_sw = s_face_digital_sw = s_face_current = nullptr;
     lv_obj_clean(s_screen);
 
@@ -342,6 +362,7 @@ void buildMenu()
     lv_obj_t *main_page = lv_menu_page_create(s_menu, (char *)"Settings");
 
     buildDisplayPage(addSubpage(main_page, LV_SYMBOL_IMAGE, "Display & Backlight"));
+    settings_wifi_page_build(addSubpage(main_page, LV_SYMBOL_WIFI, "Wi-Fi"));
     buildWatchFacePage(addSubpage(main_page, LV_SYMBOL_SETTINGS, "Watch Face"));
     buildNotificationsPage(addSubpage(main_page, LV_SYMBOL_BELL, "Notifications"));
     buildInfoPage(addSubpage(main_page, LV_SYMBOL_LIST, "System Info"));
@@ -374,6 +395,7 @@ void onScreenUnload(lv_event_t *e)
 {
     LV_UNUSED(e);
     stopInfoTimer();
+    settings_wifi_page_stop();
     app_settings_flush();
 }
 

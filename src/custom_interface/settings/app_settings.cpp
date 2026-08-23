@@ -54,6 +54,7 @@ void loadDefaults()
     s_settings.vibrate_messages = APP_VIBRATE_MESSAGES_DEFAULT;
     s_settings.vibrate_alerts   = APP_VIBRATE_ALERTS_DEFAULT;
     s_settings.notif_popup_ms   = APP_NOTIF_POPUP_DEFAULT_MS;
+    s_settings.wifi_enabled     = APP_WIFI_ENABLED_DEFAULT;
     s_settings.pinned_mask      = APP_PINNED_MASK_DEFAULT;
     s_settings.low_batt_pct     = APP_LOW_BATT_DEFAULT_PCT;
     s_settings.lora_enabled     = APP_LORA_ENABLED_DEFAULT;
@@ -231,6 +232,15 @@ void app_settings_set_vibrate_messages(bool enable)
 void app_settings_set_vibrate_alerts(bool enable)
 {
     s_settings.vibrate_alerts = enable;
+    s_dirty = true;
+}
+
+/*Not in applyAll(): wifi_service_begin() reads this itself and brings the
+  radio up, and it runs after this module -- pushing from here would mean
+  calling into a subsystem that has not loaded its credentials yet.*/
+void app_settings_set_wifi_enabled(bool enable)
+{
+    s_settings.wifi_enabled = enable;
     s_dirty = true;
 }
 

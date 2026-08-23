@@ -25,7 +25,7 @@
 
 /// Bumped whenever AppSettings changes shape. A stored blob with a different
 /// version (or a different size) is discarded in favour of the defaults.
-constexpr uint16_t APP_SETTINGS_VERSION = 2;    ///< 1 -> 2: added reserved fields for §5.14/§6.8
+constexpr uint16_t APP_SETTINGS_VERSION = 3;    ///< 1 -> 2: reserved fields for §5.14/§6.8; 2 -> 3: wifi_enabled
 
 struct AppSettings {
     uint16_t version;            ///< APP_SETTINGS_VERSION; mismatch -> defaults
@@ -36,6 +36,7 @@ struct AppSettings {
     uint8_t  vibrate_messages;
     uint8_t  vibrate_alerts;
     uint16_t notif_popup_ms;
+    uint8_t  wifi_enabled;       ///< radio state; the credentials live in wifi_service, not here
 
     /*Phone-synced pass-through: nothing on the watch reads these yet, but they
       are persisted and echoed so Gadgetbridge's own preferences round-trip
@@ -70,6 +71,13 @@ void app_settings_set_watch_face(uint8_t face);
 void app_settings_set_notif_popup_ms(uint16_t ms);
 void app_settings_set_vibrate_messages(bool enable);
 void app_settings_set_vibrate_alerts(bool enable);
+
+/*Wi-Fi. Only the radio's on/off state is kept here -- the SSID and passphrase
+  live in their own NVS namespace (wifi/wifi_service.cpp), deliberately outside
+  a struct whose fields are echoed to the phone under §6.8. Setting this does
+  not touch the radio: wifi_service owns that, and calls this to record what it
+  did. Change the radio through wifi_service_set_enabled().*/
+void app_settings_set_wifi_enabled(bool enable);
 
 /*Reserved-field setters: they update the live copy and mark dirty, but push
   nothing -- no subsystem consumes these values yet.*/

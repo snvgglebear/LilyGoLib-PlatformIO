@@ -7,6 +7,7 @@
 
 #include "quick_settings_tray_hal.h"
 #include "../app_config.h"
+#include "../wifi/wifi_service.h"
 #include <usable_area.h>
 
 namespace
@@ -37,6 +38,7 @@ lv_obj_t *s_date_label = nullptr;
 lv_obj_t *s_batt_icon = nullptr;
 lv_obj_t *s_batt_bar = nullptr;
 lv_obj_t *s_batt_pct_label = nullptr;
+lv_obj_t *s_wifi_toggle = nullptr;
 lv_obj_t *s_brightness_slider = nullptr;
 lv_obj_t *s_brightness_pct_label = nullptr;
 lv_obj_t *s_settings_button = nullptr;
@@ -77,6 +79,12 @@ void refreshContent()
     lv_bar_set_value(s_batt_bar, batt.percent, LV_ANIM_OFF);
     lv_label_set_text_fmt(s_batt_pct_label, "%d%%", batt.percent);
     lv_label_set_text(s_batt_icon, batt.charging ? LV_SYMBOL_CHARGE : batteryIconFor(batt.percent));
+
+    // The tile is a view of wifi_service, not a control with its own state:
+    // the radio can go on or off from the settings page (or come up at boot)
+    // while the tray is closed, so it is re-driven from the service on every
+    // open rather than remembering what it was last tapped to.
+    lv_obj_set_state(s_wifi_toggle, LV_STATE_CHECKED, wifi_service_enabled());
 
     int min = qst_hal_brightness_min();
     int max = qst_hal_brightness_max();
@@ -142,9 +150,9 @@ void brightnessSliderCb(lv_event_t *e)
 lv_obj_t *makeBand(lv_obj_t *tray, int32_t y, int32_t height)
 {
     // usable_area_place() can return NULL for a band entirely inside the
-    // bezel -- not expected for anything inside a 230 px tray dropped from
-    // the top of a 502px-tall Ultra panel, but fall back to the tray itself
-    // rather than crash if the geometry ever changes.
+    // bezel -- not expected for anything inside a tray dropped from the top of
+    // a 502px-tall Ultra panel, but fall back to the tray itself rather than
+    // crash if the geometry ever changes.
     lv_obj_t *band = usable_area_place(tray, y, height);
     return band ? band : tray;
 }
@@ -193,9 +201,58 @@ void buildHeader(lv_obj_t *tray)
     lv_label_set_text(s_batt_pct_label, "--%");
 }
 
+void wifiToggleClicked(lv_event_t *e)
+{
+    lv_obj_t *tile = static_cast<lv_obj_t *>(lv_event_get_target(e));
+    const bool on = lv_obj_has_state(tile, LV_STATE_CHECKED);
+    wifi_service_set_enabled(on);
+    // Read the service back rather than trusting the tap: set_enabled() is a
+    // no-op if the radio is already there, and the tile must not be left
+    // showing a state the radio is not in.
+    lv_obj_set_state(tile, LV_STATE_CHECKED, wifi_service_enabled());
+    lv_display_trigger_activity(NULL);
+}
+
+/// A square, checkable icon tile. The band is a flex row, so adding a second
+/// toggle here needs nothing else changed.
+lv_obj_t *makeToggle(lv_obj_t *band, const char *symbol, lv_event_cb_t handler)
+{
+    lv_obj_t *tile = lv_button_create(band);
+    lv_obj_set_size(tile, APP_QST_TOGGLE_SIZE, APP_QST_TOGGLE_SIZE);
+    lv_obj_add_flag(tile, LV_OBJ_FLAG_CHECKABLE);
+    lv_obj_set_style_radius(tile, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_shadow_width(tile, 0, 0);
+    lv_obj_set_style_pad_all(tile, 0, 0);
+    // Off reads as "the same dark as the tray"; on reads as the accent. Set
+    // explicitly because the theme's unchecked button is already a mid grey,
+    // which against a 0x1c1c1c tray does not look off so much as broken.
+    lv_obj_set_style_bg_color(tile, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_bg_color(tile, lv_palette_main(LV_PALETTE_BLUE), LV_STATE_CHECKED);
+    lv_obj_add_event_cb(tile, handler, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *icon = lv_label_create(tile);
+    lv_obj_set_style_text_font(icon, APP_FONT_QST_ICON, 0);
+    lv_obj_set_style_text_color(icon, lv_color_white(), 0);
+    lv_label_set_text(icon, symbol);
+    lv_obj_center(icon);
+
+    return tile;
+}
+
+void buildTogglesRow(lv_obj_t *tray)
+{
+    lv_obj_t *band = makeBand(tray, APP_QST_HEADER_HEIGHT, APP_QST_TOGGLES_BAND);
+    lv_obj_set_flex_flow(band, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(band, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(band, APP_QST_TOGGLE_GAP, 0);
+
+    s_wifi_toggle = makeToggle(band, LV_SYMBOL_WIFI, wifiToggleClicked);
+}
+
 void buildBrightnessRow(lv_obj_t *tray)
 {
-    lv_obj_t *band = makeBand(tray, APP_QST_HEADER_HEIGHT, APP_QST_BRIGHTNESS_HEIGHT);
+    lv_obj_t *band = makeBand(tray, APP_QST_HEADER_HEIGHT + APP_QST_TOGGLES_BAND,
+                              APP_QST_BRIGHTNESS_HEIGHT);
     lv_obj_set_flex_flow(band, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(band, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -219,8 +276,8 @@ void buildBrightnessRow(lv_obj_t *tray)
 
 void buildFooter(lv_obj_t *tray)
 {
-    lv_obj_t *band = makeBand(tray, APP_QST_HEADER_HEIGHT + APP_QST_BRIGHTNESS_HEIGHT,
-                              APP_QST_FOOTER_HEIGHT);
+    lv_obj_t *band = makeBand(tray, APP_QST_HEADER_HEIGHT + APP_QST_TOGGLES_BAND +
+                              APP_QST_BRIGHTNESS_HEIGHT, APP_QST_FOOTER_HEIGHT);
     lv_obj_set_flex_flow(band, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(band, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -305,6 +362,7 @@ void quick_settings_tray_init(void)
     lv_obj_add_event_cb(s_tray, trayGestureCb, LV_EVENT_GESTURE, NULL);
 
     buildHeader(s_tray);
+    buildTogglesRow(s_tray);
     buildBrightnessRow(s_tray);
     buildFooter(s_tray);
 }

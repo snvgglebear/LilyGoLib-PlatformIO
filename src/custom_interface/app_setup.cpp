@@ -21,6 +21,8 @@
 #include "settings/settings_screen.h"
 #include "watch_faces/face_registry.h"
 #include "quick_settings_tray/quick_settings_tray.h"
+#include "wifi/wifi_hal.h"
+#include "wifi/wifi_service.h"
 
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -176,6 +178,14 @@ void setupGui()
       just above.*/
     app_settings_begin();
 
+    /*Split in two on purpose. wifi_hal_begin() only puts the radio in station
+      mode and registers the got-IP/SNTP handlers -- cheap, and nothing is
+      switched on. wifi_service_begin() then reads app_settings().wifi_enabled
+      (loaded just above) plus its own saved credentials and decides whether to
+      bring the radio up and start connecting, so it has to come after both.*/
+    wifi_hal_begin();
+    wifi_service_begin();
+
     screen_home = lv_screen_active();
     watch_face_begin(screen_home);   // builds the saved face; the settings page switches it later
     lv_obj_add_event_cb(screen_home, onHomeGesture, LV_EVENT_GESTURE, NULL);
@@ -208,4 +218,7 @@ void loopGui()
       same iteration has already cleared.*/
     boot_button_poll();
     gb_app.poll();
+    /*Connect timeouts, scan completion and reconnects. Cheap when the radio is
+      off, which is its default state.*/
+    wifi_service_poll();
 }

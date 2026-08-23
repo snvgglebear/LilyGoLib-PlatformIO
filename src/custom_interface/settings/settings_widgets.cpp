@@ -119,3 +119,18 @@ lv_obj_t *settings_section(lv_obj_t *parent, const char *text)
     lv_obj_set_style_pad_top(label, APP_SETTINGS_SECTION_PAD_TOP, 0);
     return label;
 }
+lv_obj_t *settings_checkbox(lv_obj_t *parent, const char *symbol, const char *text,
+                          bool checked, lv_event_cb_t cb, void *user_data)
+{
+    lv_obj_t *row = settings_row(parent, symbol, text, /*stacked*/ false);
+
+    lv_obj_t *sw = lv_checkbox_create(row);
+    if (checked) {
+        lv_obj_add_state(sw, LV_STATE_CHECKED);
+    }
+    if (cb) {
+        lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, user_data);
+    }
+    return sw;
+}
+

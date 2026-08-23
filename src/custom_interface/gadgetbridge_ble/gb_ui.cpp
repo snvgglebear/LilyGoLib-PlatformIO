@@ -31,6 +31,7 @@
 #include "../app_config.h"
 #include "../settings/app_settings.h"
 #include "../settings/settings_screen.h"
+#include "../wifi/wifi_service.h"
 #include "lvgl.h"
 
 #include <usable_area.h>
@@ -46,6 +47,7 @@ lv_obj_t *s_tabview = nullptr;      ///< owns every page, including the grid
 lv_obj_t *s_home_button = nullptr;  ///< status bar; inert while the grid shows
 
 lv_obj_t *s_link_label = nullptr;
+lv_obj_t *s_wifi_label = nullptr;
 lv_obj_t *s_battery_label = nullptr;
 
 lv_obj_t *label_time = nullptr;
@@ -658,6 +660,28 @@ void refreshStatusBar()
                                 gb_app.connected() ? lv_palette_main(LV_PALETTE_BLUE)
                                 : lv_palette_main(LV_PALETTE_GREY), 0);
 
+    /*Wi-Fi shows only when the radio is on. An always-present icon that is
+      grey nine times out of ten costs strip width the link and battery
+      readouts need more, and "off" is not news on a watch whose Wi-Fi is off
+      by default. The colour then carries the state: blue associated, amber
+      mid-attempt, grey up but idle.*/
+    if (!wifi_service_enabled()) {
+        lv_obj_add_flag(s_wifi_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(s_wifi_label, LV_OBJ_FLAG_HIDDEN);
+        const WifiHalStatus wifi = wifi_service_status();
+        lv_color_t colour;
+        if (wifi == WIFI_HAL_CONNECTED) {
+            colour = lv_palette_main(LV_PALETTE_BLUE);
+        } else if (wifi == WIFI_HAL_CONNECTING || wifi_service_scanning()) {
+            colour = lv_palette_main(LV_PALETTE_AMBER);
+        } else {
+            colour = lv_palette_main(LV_PALETTE_GREY);
+        }
+        lv_obj_set_style_text_color(s_wifi_label, colour, 0);
+        lv_label_set_text(s_wifi_label, LV_SYMBOL_WIFI);
+    }
+
     const int percent = gb_platform::batteryPercent();
     lv_label_set_text_fmt(s_battery_label, "%s %d%%",
                           gb_platform::charging() ? LV_SYMBOL_CHARGE : LV_SYMBOL_BATTERY_FULL,
@@ -1054,6 +1078,9 @@ void buildStatusBar(lv_obj_t *parent)
 
     s_link_label = makeLabel(bar, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY),
                              LV_SYMBOL_BLUETOOTH " Advertising");
+    s_wifi_label = makeLabel(bar, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY),
+                             LV_SYMBOL_WIFI);
+    lv_obj_add_flag(s_wifi_label, LV_OBJ_FLAG_HIDDEN);   // until refreshStatusBar() says otherwise
     s_battery_label = makeLabel(bar, APP_FONT_CAPTION, lv_palette_main(LV_PALETTE_GREY),
                                 LV_SYMBOL_BATTERY_FULL " --%");
     label_time = makeLabel(bar,APP_FONT_CAPTION,lv_color_white(), "--:--");

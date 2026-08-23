@@ -50,6 +50,8 @@ lv_obj_t *settings_slider(lv_obj_t *parent, const char *symbol, const char *text
 /// lv_obj_has_state(sw, LV_STATE_CHECKED). Returns the switch.
 lv_obj_t *settings_switch(lv_obj_t *parent, const char *symbol, const char *text,
                           bool checked, lv_event_cb_t cb, void *user_data);
+lv_obj_t *settings_checkbox(lv_obj_t *parent, const char *symbol, const char *text,
+                          bool checked, lv_event_cb_t cb, void *user_data);
 
 /// Labelled action button. Returns the *button*, unlike factory's
 /// create_button(), which returns the row -- callers here never want the row.

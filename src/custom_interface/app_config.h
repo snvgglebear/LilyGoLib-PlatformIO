@@ -83,6 +83,65 @@ constexpr bool APP_VIBRATE_ALERTS_DEFAULT   = true;   ///< GB_HAPTIC_ALERT
 constexpr uint8_t APP_WATCH_FACE_DEFAULT = 1;   ///< WATCH_FACE_ANALOG
 
 // ---------------------------------------------------------------------------
+// Wi-Fi
+// ---------------------------------------------------------------------------
+/// Radio state at first boot. Off: the watch is normally driven over BLE by
+/// Gadgetbridge, Wi-Fi costs materially more current than the rest of the
+/// device put together, and there are no credentials to use on a fresh flash
+/// anyway.
+constexpr bool APP_WIFI_ENABLED_DEFAULT = false;
+
+/// How long wifi_service waits for an association before calling it failed.
+/// Arduino reports WL_DISCONNECTED both while trying and after giving up, so
+/// without a timeout of our own a bad connect shows as "connecting" forever.
+constexpr uint32_t APP_WIFI_CONNECT_TIMEOUT_MS = 15000;
+
+/// Gap between automatic reconnect attempts to the saved network. Not applied
+/// after a rejected passphrase -- that one stops and waits for the user, since
+/// retrying a password known to be wrong only burns battery.
+constexpr uint32_t APP_WIFI_RECONNECT_MS = 30000;
+
+/// Cap on the scan list. The Ultra has 320 KB of RAM and these are held in a
+/// static array; 16 is well past what fits on screen anyway.
+constexpr int APP_WIFI_MAX_SCAN_RESULTS = 16;
+
+/// Bars shown by the status-bar icon and the settings list, and the dBm floor
+/// for each. RSSI is negative, so these read from strongest to weakest.
+constexpr int32_t APP_WIFI_RSSI_EXCELLENT = -55;
+constexpr int32_t APP_WIFI_RSSI_GOOD      = -67;
+constexpr int32_t APP_WIFI_RSSI_FAIR      = -78;
+
+// ---------------------------------------------------------------------------
+// NTP -- what a Wi-Fi connection is actually for
+// ---------------------------------------------------------------------------
+/**
+ * Clock sync over the network, started when the association gets an IP and
+ * written through to the hardware RTC. Ported from src/factory/factory.ino.
+ *
+ * Note this is the *fallback* path here, not the primary one: Gadgetbridge
+ * sets the watch clock over BLE (protocol §5.2) and does so in local time. NTP
+ * gives UTC, so leaving APP_NTP_GMT_OFFSET_SEC at 0 on a watch that is also
+ * phone-synced will have the two sources disagree by your UTC offset --
+ * override it (`-D APP_NTP_GMT_OFFSET_SEC=-18000`) or set
+ * APP_WIFI_NTP_SYNC to 0 if the phone is the only clock you want.
+ */
+#ifndef APP_WIFI_NTP_SYNC
+#define APP_WIFI_NTP_SYNC 1
+#endif
+#ifndef APP_NTP_SERVER_PRIMARY
+#define APP_NTP_SERVER_PRIMARY   "pool.ntp.org"
+#endif
+#ifndef APP_NTP_SERVER_SECONDARY
+#define APP_NTP_SERVER_SECONDARY "time.nist.gov"
+#endif
+#ifndef APP_NTP_GMT_OFFSET_SEC
+#define APP_NTP_GMT_OFFSET_SEC 0
+#endif
+#ifndef APP_NTP_DAYLIGHT_OFFSET_SEC
+#define APP_NTP_DAYLIGHT_OFFSET_SEC 0
+#endif
+
+// ---------------------------------------------------------------------------
 // Reserved -- phone-synced pass-through, no watch consumer yet
 // ---------------------------------------------------------------------------
 /// These three fields are persisted on the watch and echoed to Gadgetbridge
@@ -119,11 +178,21 @@ constexpr bool     APP_LORA_ENABLED_DEFAULT  = false;   ///< fail-closed
 // ---------------------------------------------------------------------------
 // Fonts -- simple watch face
 // ---------------------------------------------------------------------------
-//extern lv_font_t font_clock_120;
-//#define APP_FONT_FACE_TIME &font_clock_120
-//#define APP_FONT_FACE_TIME   &lv_font_montserrat_48
-#define APP_FONT_FACE_DATE   &lv_font_montserrat_20
-#define APP_FONT_FACE_BATT   &lv_font_montserrat_16
+/**
+ * Alibaba PuHuiTi Bold, the face this repo's factory firmware clock is set
+ * in, converted at three fixed pixel sizes rather than scaled from one. The
+ * generated sources are watch_faces/font_alibaba_{100,24,12}.c (copied from
+ * src/factory/src/font/, LVGL 9 variants) and the symbols are declared in
+ * watch_faces/simple_face.h, which every user of these macros includes.
+ *
+ * The 100 px cut carries only `0123456789:` -- the exact glyph set the clock
+ * needs -- so it costs a fraction of a full-ASCII face at that size. Nothing
+ * else may be set in it; the date and battery readouts use the 24 and 12 px
+ * cuts, which are full ASCII (range 32-127).
+ */
+#define APP_FONT_FACE_TIME   &font_alibaba_100
+#define APP_FONT_FACE_DATE   &font_alibaba_24
+#define APP_FONT_FACE_BATT   &font_alibaba_12
 
 // ---------------------------------------------------------------------------
 // Fonts -- quick settings tray
@@ -148,6 +217,13 @@ constexpr bool     APP_LORA_ENABLED_DEFAULT  = false;   ///< fail-closed
 // ---------------------------------------------------------------------------
 // Settings page
 // ---------------------------------------------------------------------------
+/// The Wi-Fi page's scan list, and the on-screen keyboard the password prompt
+/// raises. The list is a fixed height rather than flex-grown: it sits inside a
+/// scrolling menu page, and a list that grows to fill its parent inside a
+/// scroller has no height to grow into.
+constexpr int32_t APP_WIFI_LIST_HEIGHT = 220;
+constexpr int32_t APP_WIFI_KEYBOARD_HEIGHT_PCT = 45;
+
 /// Height of one settings row. Well above a fingertip, because these rows are
 /// scrolled past as often as they are aimed at.
 constexpr int32_t APP_SETTINGS_ROW_HEIGHT = 56;
@@ -262,11 +338,18 @@ constexpr size_t APP_GB_CHAT_PREVIEW_CHARS  = 44;
 // Quick settings tray
 // ---------------------------------------------------------------------------
 /// The tray drops from the top of the screen, so its total height is also how
-/// far it travels. The three bands below must sum to no more than this.
-constexpr int32_t APP_QST_TRAY_HEIGHT       = 230;
+/// far it travels -- so it is the sum of its bands rather than a number that
+/// has to be kept in agreement with them by hand. (It was: before the toggles
+/// band was added the three bands summed to 250 against a declared 230, and
+/// the footer hung 20 px past the tray's own background.)
 constexpr int32_t APP_QST_HEADER_HEIGHT     = 110;  ///< clock + battery
+constexpr int32_t APP_QST_TOGGLES_BAND      = 76;   ///< Wi-Fi (and future) tiles
 constexpr int32_t APP_QST_BRIGHTNESS_HEIGHT = 70;   ///< icon + slider + readout
 constexpr int32_t APP_QST_FOOTER_HEIGHT     = 70;   ///< grabber + gear
+constexpr int32_t APP_QST_TRAY_HEIGHT       = APP_QST_HEADER_HEIGHT +
+                                              APP_QST_TOGGLES_BAND +
+                                              APP_QST_BRIGHTNESS_HEIGHT +
+                                              APP_QST_FOOTER_HEIGHT;
 
 /// The battery meter under the charge icon.
 constexpr int32_t APP_QST_BATT_BAR_WIDTH  = 80;
@@ -283,22 +366,47 @@ constexpr int32_t APP_QST_SLIDER_WIDTH_PCT = 50;
 constexpr int32_t APP_QST_GEAR_PAD_RIGHT = 8;
 constexpr int32_t APP_QST_GEAR_EXT_CLICK = 12;
 
+/// One tile in the toggles band (APP_QST_TOGGLES_BAND above sizes the band
+/// itself). One tile today, Wi-Fi; the band is a flex row, so a second sits
+/// beside it without any number here changing.
+constexpr int32_t APP_QST_TOGGLE_SIZE = 56;   ///< square side of one tile
+constexpr int32_t APP_QST_TOGGLE_GAP  = 12;   ///< gap between tiles
+
 // ---------------------------------------------------------------------------
 // Simple watch face
 // ---------------------------------------------------------------------------
-/// Gap between the face's four stacked elements.
-constexpr int32_t APP_FACE_PAD_ROW = 8;
+/// Percentages below are of the usable rect (338x430 on the Ultra), not of the
+/// raw 410x502 panel, so widening BEZEL_RADIUS shrinks the face with it.
 
-/// Draw-time magnification of the clock label, since 48 px is as large as
-/// LVGL's bitmap fonts go. Scaling does not grow the box flex reserves, hence
-/// APP_FACE_TIME_MARGIN above and below to keep the enlarged render off the
-/// date beneath it -- raise them together.
-constexpr int32_t APP_FACE_TIME_SCALE  = 2;
-constexpr int32_t APP_FACE_TIME_MARGIN = 24;
+/// The two translucent panels the hour and minute sit in, and how far they are
+/// nudged from the left/right edges and from the vertical middle.
+///
+/// 42% is 142 px, which is what a two-digit group needs: APP_FONT_FACE_TIME
+/// advances 59 px per digit. The remaining 54 px between the panels is where
+/// the colon goes (40 px advance), so widening these without also lowering
+/// APP_FACE_CLOCK_X_OFFSET will crowd it.
+constexpr int32_t APP_FACE_CLOCK_BOX_WIDTH_PCT  = 42;
+constexpr int32_t APP_FACE_CLOCK_BOX_HEIGHT_PCT = 45;
+constexpr int32_t APP_FACE_CLOCK_X_OFFSET       = 0;
+constexpr int32_t APP_FACE_CLOCK_Y_OFFSET       = -20;
 
-/// The battery meter along the bottom.
-constexpr int32_t APP_FACE_BATT_BAR_WIDTH_PCT = 50;
-constexpr int32_t APP_FACE_BATT_BAR_HEIGHT   = 20;
+/// How far the date/battery row sits above the bottom of the usable rect.
+constexpr int32_t APP_FACE_BOTTOM_OFFSET = -45;
+
+/// The rule above that row. Factory draws this 150 px wide and 4 px thick;
+/// it aligns it 15 px *below* the bottom edge, where the Ultra never shows it,
+/// so APP_FACE_DIVIDER_GAP lifts it to sit above the date instead.
+constexpr int32_t APP_FACE_DIVIDER_WIDTH     = 150;
+constexpr int32_t APP_FACE_DIVIDER_THICKNESS = 4;
+constexpr int32_t APP_FACE_DIVIDER_GAP       = 12;
+
+/// The battery meter is an lv_bar nested inside the 31x24 img_battery outline,
+/// inset far enough to sit within the drawn shell rather than over it. The
+/// percentage label hangs off its left edge by APP_FACE_BATT_LABEL_GAP.
+constexpr int32_t APP_FACE_BATT_PAD_RIGHT    = 60;
+constexpr int32_t APP_FACE_BATT_LABEL_GAP    = 5;
+constexpr int32_t APP_FACE_BATT_BAR_INSET_W  = 8;
+constexpr int32_t APP_FACE_BATT_BAR_INSET_H  = 12;
 
 // ---------------------------------------------------------------------------
 // Analog dial face
