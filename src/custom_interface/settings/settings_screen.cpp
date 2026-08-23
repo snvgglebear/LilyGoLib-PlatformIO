@@ -165,6 +165,11 @@ bool switchIsOn(lv_event_t *e)
     return lv_obj_has_state((lv_obj_t *)lv_event_get_target(e), LV_STATE_CHECKED);
 }
 
+bool CheckboxChecked(lv_event_t *e)
+{
+    return lv_obj_has_state((lv_obj_t *)lv_event_get_target(e), LV_STATE_CHECKED);
+}
+
 void wristWakeChanged(lv_event_t *e)
 {
     app_settings_set_wrist_wake(switchIsOn(e));
@@ -172,14 +177,14 @@ void wristWakeChanged(lv_event_t *e)
 
 void analogFaceChanged(lv_event_t *e)
 {
-    app_settings_set_watch_face(switchIsOn(e) ? WATCH_FACE_ANALOG : WATCH_FACE_DIGITAL);
+    app_settings_set_watch_face(CheckboxChecked(e) ? WATCH_FACE_ANALOG : WATCH_FACE_DIGITAL);
     gb_app.reportSettingsChanged();   // §6.8: `clock_mode` echo
     refreshWatchFaceRows();
 }
 
 void digitalFaceChanged(lv_event_t *e)
 {
-    app_settings_set_watch_face(switchIsOn(e) ? WATCH_FACE_DIGITAL : WATCH_FACE_ANALOG);
+    app_settings_set_watch_face(CheckboxChecked(e) ? WATCH_FACE_DIGITAL : WATCH_FACE_ANALOG);
     gb_app.reportSettingsChanged();   // §6.8: `clock_mode` echo
     refreshWatchFaceRows();
 }
