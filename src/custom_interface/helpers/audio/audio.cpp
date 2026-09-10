@@ -1,3 +1,12 @@
+/*ESP32-only, and guarded as a whole rather than per-include: this is FreeRTOS
+  tasks, I2S, NVS and the vendored libhelix MP3 decoder from top to bottom, and
+  lib/libhelix-mp3 declares `architectures=esp32` in its library.properties, so
+  the native build cannot even see mp3dec.h. Nothing in custom_interface calls
+  into audio.h today; without this the file still broke every emulator build,
+  because PlatformIO compiles everything under src_dir whether it is reached or
+  not.*/
+#ifdef ARDUINO
+
 #include <cstdint>
 #include <cstddef>
 #include <mp3dec.h>
@@ -111,3 +120,4 @@ WAIT:
 #endif
     return true;
 }
+#endif /*ARDUINO*/

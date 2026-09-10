@@ -12,6 +12,7 @@
 #include <lvgl.h>
 
 #include <usable_area.h>
+#include "app_config.h"
 #include "boot_button/boot_button.h"
 #include "screen_state/screen_state.h"
 #include "gadgetbridge_ble/gb_app.h"
@@ -41,9 +42,37 @@ namespace
 lv_obj_t *screen_home;
 lv_obj_t *screen_gadgetbridge;
 
-/// How long a screen-to-screen slide takes. One value so the swipes and the
-/// BOOT button move at the same speed in both directions.
-constexpr uint32_t SCREEN_ANIM_MS = 220;
+/*Screen-slide duration and the touch thresholds now live in app_config.h, with
+  the rest of the app's knobs -- see APP_SCREEN_ANIM_MS and the APP_TOUCH_*
+  block. The value below is the old local constant's, unchanged.*/
+constexpr uint32_t SCREEN_ANIM_MS = APP_SCREEN_ANIM_MS;
+
+/**
+ * Push the app's swipe/scroll thresholds into every pointer device.
+ *
+ * A fix-up rather than configuration: LVGL copies its own LV_INDEV_DEF_*
+ * values into a device when the device is created, and there is no way to
+ * change those defaults -- they are unguarded #defines in lv_indev.c that
+ * lv_conf.h never sees. So the devices are created by beginLvglHelper() with
+ * LVGL's numbers and corrected here.
+ *
+ * Loops rather than taking lv_indev_get_next(NULL) and stopping, because a
+ * board can register more than one device: the T-LoRa-Pager adds an encoder
+ * and a keyboard, and neither has gestures to tune.
+ */
+void applyTouchTuning()
+{
+    for (lv_indev_t *indev = lv_indev_get_next(NULL); indev;
+         indev = lv_indev_get_next(indev)) {
+        if (lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) {
+            continue;
+        }
+        lv_indev_set_gesture_min_distance(indev, APP_TOUCH_GESTURE_DISTANCE);
+        lv_indev_set_gesture_min_velocity(indev, APP_TOUCH_GESTURE_VELOCITY);
+        lv_indev_set_scroll_limit(indev, APP_TOUCH_SCROLL_LIMIT);
+        lv_indev_set_scroll_throw(indev, APP_TOUCH_SCROLL_THROW);
+    }
+}
 
 /**
  * True when the drag that produced this gesture is already scrolling
@@ -167,6 +196,11 @@ void onScreenWake()
 
 void setupGui()
 {
+    /*First: the input devices already exist (beginLvglHelper() created them
+      before setupGui() was called) and every gesture handler wired up below
+      depends on how they are tuned.*/
+    applyTouchTuning();
+
     // Initialize the usable area
     usable_area_init();          // styles/clips whichever screen is active now -- that's screen_home
     screen_state_init();

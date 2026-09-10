@@ -13,9 +13,11 @@
 namespace
 {
 
-/// How long the tray takes to slide in or out. Not a size, so it stays here
-/// rather than in app_config.h with APP_QST_TRAY_HEIGHT and the band heights.
-constexpr uint32_t QST_ANIM_DURATION_MS = 220;
+/// How long the tray takes to slide in or out. This used to stay here on the
+/// grounds that app_config.h held sizes and not timings; that header now has a
+/// Motion block, so the value moved there with the screen-slide duration and
+/// this is the alias.
+constexpr uint32_t QST_ANIM_DURATION_MS = APP_QST_ANIM_MS;
 
 /// Mirrors the three-way state a bool can't represent cleanly: an in-flight
 /// open/close anim still needs its target (OPEN/CLOSED) to know which way an
@@ -39,6 +41,7 @@ lv_obj_t *s_batt_icon = nullptr;
 lv_obj_t *s_batt_bar = nullptr;
 lv_obj_t *s_batt_pct_label = nullptr;
 lv_obj_t *s_wifi_toggle = nullptr;
+lv_obj_t *s_bt_toggle = nullptr;
 lv_obj_t *s_brightness_slider = nullptr;
 lv_obj_t *s_brightness_pct_label = nullptr;
 lv_obj_t *s_settings_button = nullptr;
@@ -212,6 +215,17 @@ void wifiToggleClicked(lv_event_t *e)
     lv_obj_set_state(tile, LV_STATE_CHECKED, wifi_service_enabled());
     lv_display_trigger_activity(NULL);
 }
+void btToggleClicked(lv_event_t *e)
+{
+    lv_obj_t *tile = static_cast<lv_obj_t *>(lv_event_get_target(e));
+    const bool on = lv_obj_has_state(tile, LV_STATE_CHECKED);
+    //bt_service_set_enabled(on);
+    // Read the service back rather than trusting the tap: set_enabled() is a
+    // no-op if the radio is already there, and the tile must not be left
+    // showing a state the radio is not in.
+    //lv_obj_set_state(tile, LV_STATE_CHECKED, bt_service_enabled());
+    lv_display_trigger_activity(NULL);
+}
 
 /// A square, checkable icon tile. The band is a flex row, so adding a second
 /// toggle here needs nothing else changed.
@@ -247,6 +261,7 @@ void buildTogglesRow(lv_obj_t *tray)
     lv_obj_set_style_pad_column(band, APP_QST_TOGGLE_GAP, 0);
 
     s_wifi_toggle = makeToggle(band, LV_SYMBOL_WIFI, wifiToggleClicked);
+    //s_bt_toggle = makeToggle(band, LV_SYMBOL_BLUETOOTH, btToggleClicked);
 }
 
 void buildBrightnessRow(lv_obj_t *tray)

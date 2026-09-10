@@ -30,13 +30,21 @@
 #include "gb_link.h"
 #include "../app_config.h"
 #include "../settings/app_settings.h"
+#include "../screen_state/screen_state.h"
 #include "../settings/settings_screen.h"
 #include "../wifi/wifi_service.h"
 #include "lvgl.h"
 
 #include <usable_area.h>
+
+/*Board headers, for the one RTC read in refreshStatusBar(). That read is
+  already inside an #ifdef ARDUINO; these were not, which broke the native
+  build -- SensorLib is not among env_emulator's lib_deps and LilyGoWatchUltra.h
+  needs the Arduino core either way.*/
+#ifdef ARDUINO
 #include <SensorRTC.h>
 #include <LilyGoWatchUltra.h>
+#endif
 
 namespace
 {
@@ -70,6 +78,7 @@ lv_obj_t *s_thread_body = nullptr;
 size_t s_thread_index = 0;
 
 lv_obj_t *s_message_box = nullptr;  ///< "new message" popup
+lv_obj_t *s_recall_icon = nullptr;  ///< top-left button that re-raises a timed-out popup
 
 lv_obj_t *s_music_track = nullptr;
 lv_obj_t *s_music_artist = nullptr;
@@ -103,6 +112,37 @@ enum GbTab {
     GB_TAB_ALERTS,
     GB_TAB_MUSIC,
 };
+
+/// Not a page in s_tabview. Settings is a screen of its own -- deliberately
+/// outside the swipe chain, so the user cannot land on it by swiping past
+/// Music -- so its tile carries an action rather than an index.
+constexpr uint32_t GB_TAB_NONE = UINT32_MAX;
+
+/// One launcher tile. `tab` and `open` are alternatives: gridTileClicked()
+/// calls `open` when it is set, and otherwise shows page `tab`.
+struct GbGridEntry {
+    const char *icon;
+    const char *name;
+    uint32_t    tab;         ///< page in s_tabview the tile opens, or GB_TAB_NONE
+    void      (*open)(void); ///< non-NULL instead of a tab: run this
+};
+
+/// The launcher grid, in display order. Adding a tile is one edit here plus,
+/// for a new page, a GbTab value and a build*Tab() call in gb_ui_begin().
+const GbGridEntry GB_GRID_ENTRIES[] = {
+    {LV_SYMBOL_HOME,     "Watch",    GB_TAB_WATCH,  nullptr},
+    {LV_SYMBOL_ENVELOPE, "Chats",    GB_TAB_CHATS,  nullptr},
+    {LV_SYMBOL_BELL,     "Alerts",   GB_TAB_ALERTS, nullptr},
+    {LV_SYMBOL_AUDIO,    "Music",    GB_TAB_MUSIC,  nullptr},
+    {LV_SYMBOL_SETTINGS, "Settings", GB_TAB_NONE,   settings_screen_open},
+};
+
+/// Kept with the table rather than in buildGridTab(): the bound is a property
+/// of what is in GB_GRID_ENTRIES, so the check belongs where a tile gets added
+/// and the message is read.
+constexpr uint32_t GB_GRID_COUNT = sizeof(GB_GRID_ENTRIES) / sizeof(GB_GRID_ENTRIES[0]);
+static_assert(GB_GRID_COUNT <= APP_GB_GRID_COLS * APP_GB_GRID_ROWS,
+              "more grid entries than cells -- widen APP_GB_GRID_ROWS/COLS");
 
 const char *const GB_QUICK_REPLIES[] = {"OK", "On my way", "Call you later"};
 
@@ -261,12 +301,78 @@ void trackBox(lv_obj_t *box, lv_obj_t **slot)
     }, LV_EVENT_DELETE, slot);
 }
 
+// -- missed-popup recall -------------------------------------------------
+
+void showMessagePopup(const GbConversation *conversation);   // built further down
+
 /**
- * Close @p box by itself after the user's configured popup duration.
+ * The popup timed out without the user acting on it, so leave a way back to it
+ * rather than losing it. Only autoDismiss() calls this -- every other way the
+ * popup closes is the user finishing with it.
+ */
+void showRecallIcon()
+{
+    if (s_recall_icon) {
+        lv_obj_remove_flag(s_recall_icon, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void hideRecallIcon()
+{
+    if (s_recall_icon) {
+        lv_obj_add_flag(s_recall_icon, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/**
+ * Re-raise the popup for the newest conversation.
+ *
+ * Re-read from gb_app rather than stashed when the popup timed out: the
+ * conversation may have gained messages since, and the phone may have dismissed
+ * it entirely (§6.6), in which case there is nothing to show and hiding the
+ * icon is the whole action.
+ */
+void recallIconClicked(lv_event_t *event)
+{
+    LV_UNUSED(event);
+    hideRecallIcon();
+    const GbConversation *conversation = gb_app.messages().at(0);
+    if (!conversation) {
+        return;
+    }
+    showMessagePopup(conversation);
+}
+
+/// How often the auto-dismiss countdown is stepped. Fine enough that the
+/// popup's lifetime is accurate to a tenth of a second, coarse enough to be
+/// nothing next to LVGL's own refresh, and it only runs while a popup is up.
+constexpr uint32_t AUTO_DISMISS_TICK_MS = 100;
+
+struct AutoDismissState {
+    lv_obj_t *box;
+    uint32_t  remaining_ms;
+    void    (*on_expire)(void);   ///< NULL for a popup that just goes quietly
+};
+
+/**
+ * Close @p box by itself after @p after_ms of *visible* time, then call
+ * @p on_expire.
  *
  * Only the message popup gets one: a call, an alarm and "find device" are all
  * things the user is expected to act on, and a timeout that dismissed them
  * would lose the interaction rather than tidy it away.
+ *
+ * "Visible" is the point of the tick. A one-shot timer counts wall time, and
+ * the display is not always on: a message arriving while the watch was asleep
+ * raised a popup into a dark screen, timed out unseen, and was gone before the
+ * user ever looked -- which read as "waking the watch dismissed my popup".
+ * Holding the countdown while asleep makes the duration mean what the settings
+ * page says it means, seconds the popup was actually on screen.
+ *
+ * @p on_expire separates timing out from being dismissed. Every other way this
+ * box can close -- footer button, close button, swipe, closeBox() from code --
+ * is the user finishing with it; only this one is the popup giving up on its
+ * own, which is the case that leaves something behind to recall.
  *
  * The timer is owned by the box -- deleted with it via LV_EVENT_DELETE -- so
  * dismissing the popup early cannot leave a timer holding a dangling pointer,
@@ -278,18 +384,40 @@ void trackBox(lv_obj_t *box, lv_obj_t **slot)
  * lv_timer_exec() skips its "repeat count is over, delete" branch when
  * state.timer_deleted was set during the call (lv_timer.c:339).
  */
-void autoDismiss(lv_obj_t *box, uint32_t after_ms)
+void autoDismiss(lv_obj_t *box, uint32_t after_ms, void (*on_expire)(void))
 {
     if (after_ms == 0) {
         return;
     }
+    AutoDismissState *state =
+        static_cast<AutoDismissState *>(lv_malloc(sizeof(AutoDismissState)));
+    if (!state) {
+        return;     // no timer rather than no popup: it stays up until dismissed
+    }
+    state->box = box;
+    state->remaining_ms = after_ms;
+    state->on_expire = on_expire;
+
     lv_timer_t *timer = lv_timer_create([](lv_timer_t * t) {
-        lv_msgbox_close(static_cast<lv_obj_t *>(lv_timer_get_user_data(t)));
-    }, after_ms, box);
-    lv_timer_set_repeat_count(timer, 1);
+        AutoDismissState *s = static_cast<AutoDismissState *>(lv_timer_get_user_data(t));
+        if (screen_state_is_asleep()) {
+            return;                             // nobody can see it; do not spend its time
+        }
+        if (s->remaining_ms > AUTO_DISMISS_TICK_MS) {
+            s->remaining_ms -= AUTO_DISMISS_TICK_MS;
+            return;
+        }
+        void (*on_expire)(void) = s->on_expire;
+        lv_msgbox_close(s->box);                // frees `s` via the handler below
+        if (on_expire) {
+            on_expire();
+        }
+    }, AUTO_DISMISS_TICK_MS, state);
 
     lv_obj_add_event_cb(box, [](lv_event_t * event) {
-        lv_timer_delete(static_cast<lv_timer_t *>(lv_event_get_user_data(event)));
+        lv_timer_t *t = static_cast<lv_timer_t *>(lv_event_get_user_data(event));
+        lv_free(lv_timer_get_user_data(t));
+        lv_timer_delete(t);
     }, LV_EVENT_DELETE, timer);
 }
 
@@ -802,19 +930,16 @@ void refreshChats()
     refreshThread();                // a message may have landed in the open thread
 }
 
-/// Raise the popup once per arriving message, unless its thread is already open.
-void maybeShowMessagePopup()
+/**
+ * Build and raise the new-message popup for @p conversation.
+ *
+ * Split out of maybeShowMessagePopup() because the recall icon raises the same
+ * popup a second time, from a click rather than from an arrival -- so the
+ * arrival test and the box belong in different functions.
+ */
+void showMessagePopup(const GbConversation *conversation)
 {
-    if (!gb_app.takeMessageArrival()) {
-        return;
-    }
-    const GbConversation *conversation = gb_app.messages().at(0);
-    if (!conversation) {
-        return;
-    }
-    if (s_thread_view && s_thread_index == 0) {
-        return;                     // you are already looking at it
-    }
+    hideRecallIcon();               // this popup supersedes whatever was pending
 
     closeBox(s_message_box);
     trackBox(makeSafeMsgbox(), &s_message_box);
@@ -830,7 +955,23 @@ void maybeShowMessagePopup()
     lv_msgbox_add_close_button(s_message_box);
     sizeMsgboxStrips(s_message_box);
     addSwipeToDismiss(s_message_box, messageBoxSwiped);
-    autoDismiss(s_message_box, app_settings().notif_popup_ms);
+    autoDismiss(s_message_box, app_settings().notif_popup_ms, showRecallIcon);
+}
+
+/// Raise the popup once per arriving message, unless its thread is already open.
+void maybeShowMessagePopup()
+{
+    if (!gb_app.takeMessageArrival()) {
+        return;
+    }
+    const GbConversation *conversation = gb_app.messages().at(0);
+    if (!conversation) {
+        return;
+    }
+    if (s_thread_view && s_thread_index == 0) {
+        return;                     // you are already looking at it
+    }
+    showMessagePopup(conversation);
 }
 
 void refreshMusic()
@@ -960,6 +1101,16 @@ void tabChanged(lv_event_t *event)
 {
     LV_UNUSED(event);
     refreshHomeButton();
+
+    /*Here rather than in showTab(), which only covers a tile tap or the home
+      button: a left/right swipe moves the tabview directly and reaches this
+      handler without going through it. lv_tabview_set_active() raises this
+      event too, so showTab()'s route is still covered.*/
+    if (lv_tabview_get_tab_active(s_tabview) == GB_TAB_CHATS) {
+        // The list this popup was a shortcut into is now on screen, so the
+        // shortcut has nothing left to offer.
+        hideRecallIcon();
+    }
 }
 
 void showTab(uint32_t tab, lv_anim_enable_t animate)
@@ -973,18 +1124,6 @@ void homeClicked(lv_event_t *event)
     LV_UNUSED(event);
     showTab(GB_TAB_GRID, LV_ANIM_ON);
 }
-
-struct GbGridEntry {
-    const char *icon;
-    const char *name;
-    uint32_t    tab;         ///< page in s_tabview the tile opens, or GB_TAB_NONE
-    void      (*open)(void); ///< non-NULL instead of a tab: run this
-};
-
-/// Not a page in s_tabview. Settings is a screen of its own -- deliberately
-/// outside the swipe chain, so the user cannot land on it by swiping past
-/// Music -- so its tile carries an action rather than an index.
-constexpr uint32_t GB_TAB_NONE = UINT32_MAX;
 
 void gridTileClicked(lv_event_t *event)
 {
@@ -1019,22 +1158,12 @@ lv_obj_t *makeIconButton(lv_obj_t *parent, const char *symbol, lv_event_cb_t han
     return button;
 }
 
-const GbGridEntry GB_GRID_ENTRIES[] = {
-    {LV_SYMBOL_HOME,     "Watch",    GB_TAB_WATCH,  nullptr},
-    {LV_SYMBOL_ENVELOPE, "Chats",    GB_TAB_CHATS,  nullptr},
-    {LV_SYMBOL_BELL,     "Alerts",   GB_TAB_ALERTS, nullptr},
-    {LV_SYMBOL_AUDIO,    "Music",    GB_TAB_MUSIC,  nullptr},
-    {LV_SYMBOL_SETTINGS, "Settings", GB_TAB_NONE,   settings_screen_open},
-};
+
 
 /// Page 0: one large tile per page, laid out on an LVGL grid so the tiles
 /// divide whatever the panel gives them evenly at any screen size.
 void buildGridTab(lv_obj_t *tab)
 {
-    const uint32_t count = sizeof(GB_GRID_ENTRIES) / sizeof(GB_GRID_ENTRIES[0]);
-    static_assert(count <= APP_GB_GRID_COLS * APP_GB_GRID_ROWS,
-                  "more grid entries than cells -- widen APP_GB_GRID_ROWS/COLS");
-
     static int32_t cols[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
     static int32_t rows[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
 
@@ -1043,7 +1172,7 @@ void buildGridTab(lv_obj_t *tab)
     lv_obj_set_style_pad_row(tab, APP_GB_GRID_GAP, 0);      // LVGL 9.2 has no pad_gap;
     lv_obj_set_style_pad_column(tab, APP_GB_GRID_GAP, 0);   // the grid reads row/column
 
-    for (uint32_t i = 0; i < count; i++) {
+    for (uint32_t i = 0; i < GB_GRID_COUNT; i++) {
         lv_obj_t *tile = lv_button_create(tab);
         lv_obj_set_grid_cell(tile, LV_GRID_ALIGN_STRETCH, i % APP_GB_GRID_COLS, 1,
                              LV_GRID_ALIGN_STRETCH, i / APP_GB_GRID_COLS, 1);
@@ -1060,6 +1189,53 @@ void buildGridTab(lv_obj_t *tab)
         makeLabel(tile, APP_FONT_HUGE, lv_color_white(), GB_GRID_ENTRIES[i].icon);
         makeLabel(tile, APP_FONT_BODY, lv_color_white(), GB_GRID_ENTRIES[i].name);
     }
+}
+
+/**
+ * The missed-popup recall button, on lv_layer_top() rather than on a screen.
+ *
+ * The popup it brings back is on that layer too, and neither belongs to any one
+ * screen: a message can time out while the watch face is showing and be wanted
+ * back from the launcher grid. Hidden until autoDismiss() says otherwise.
+ *
+ * Top right rather than top left: the left is where lv_menu puts the settings
+ * screen's back button and where a settings row puts its symbol, so a button
+ * floating there on the top layer would sit over both.
+ */
+void buildRecallIcon()
+{
+    s_recall_icon = lv_button_create(lv_layer_top());
+    lv_obj_set_size(s_recall_icon, APP_GB_RECALL_SIZE, APP_GB_RECALL_SIZE);
+    lv_obj_set_style_radius(s_recall_icon, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_shadow_width(s_recall_icon, 0, 0);
+    lv_obj_set_style_pad_all(s_recall_icon, 0, 0);
+    lv_obj_set_style_bg_color(s_recall_icon, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_set_ext_click_area(s_recall_icon, APP_GB_RECALL_EXT_CLICK);
+    lv_obj_add_event_cb(s_recall_icon, recallIconClicked, LV_EVENT_CLICKED, NULL);
+
+    /*"Top right" is not (width, 0) on curved glass: at APP_GB_RECALL_TOP the
+      bezel still eats the right edge, and by how much is what the engine knows.
+      A no-op inset on the flat-panel boards, where this lands one gap in from
+      the edge.*/
+    const int32_t inset = usable_area_inset_for_band(APP_GB_RECALL_TOP,
+                                                     APP_GB_RECALL_TOP + APP_GB_RECALL_SIZE);
+    const int32_t x = usable_area_screen_width() - inset - APP_GB_RECALL_GAP
+                      - APP_GB_RECALL_SIZE;
+    lv_obj_set_pos(s_recall_icon, x, APP_GB_RECALL_TOP);
+
+    lv_obj_t *label = lv_label_create(s_recall_icon);
+    lv_obj_set_style_text_font(label, APP_FONT_CAPTION, 0);
+    lv_label_set_text(label, LV_SYMBOL_ENVELOPE);
+    lv_obj_center(label);
+
+    lv_obj_add_flag(s_recall_icon, LV_OBJ_FLAG_HIDDEN);
+
+    /*Bottom of lv_layer_top()'s child list. The quick-settings tray was created
+      first and a later child draws over an earlier one, so without this the
+      button would float on top of the open tray. Msgbox backdrops are created
+      later still and so cover it, which is right -- a popup that is up makes
+      the button that recalls one meaningless.*/
+    lv_obj_move_to_index(s_recall_icon, 0);
 }
 
 void buildStatusBar(lv_obj_t *parent)
@@ -1187,6 +1363,8 @@ void gb_ui_begin(lv_obj_t *screen)
     buildChatsTab(lv_tabview_add_tab(s_tabview, "Chats"));
     buildAlertsTab(lv_tabview_add_tab(s_tabview, "Alerts"));
     buildMusicTab(lv_tabview_add_tab(s_tabview, "Music"));
+
+    buildRecallIcon();      // lv_layer_top(): outlives every screen switch below
 
     lv_obj_add_event_cb(s_tabview, tabChanged, LV_EVENT_VALUE_CHANGED, NULL);
     lv_tabview_set_active(s_tabview, GB_TAB_GRID, LV_ANIM_OFF);

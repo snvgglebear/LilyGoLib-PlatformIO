@@ -62,6 +62,37 @@ constexpr uint16_t APP_SCREEN_TIMEOUT_STEP_S    = 5;
 constexpr bool APP_WRIST_WAKE_DEFAULT = true;
 
 // ---------------------------------------------------------------------------
+// Touch & gestures
+// ---------------------------------------------------------------------------
+/**
+ * Swipe and scroll thresholds, pushed into the touch device by setupGui().
+ *
+ * These deliberately are not build flags, because they cannot be. LVGL's own
+ * LV_INDEV_DEF_* values are plain #defines inside lv_indev.c -- not
+ * #ifndef-guarded, and never read from lv_conf.h -- so -D cannot reach them.
+ * They are copied into the device when it is created, and the only way to
+ * change them afterwards is lv_indev_set_*(), which app_setup.cpp does once
+ * from the values below. The LVGL defaults are noted per line so it is clear
+ * which way you are pushing each one.
+ *
+ * The GAP between the two distances is load-bearing, not incidental.
+ * gestureOwnedByScroll() in app_setup.cpp decides whether a gesture is a real
+ * navigation or the side effect of a drag that is already scrolling something,
+ * and it is only reliable because LVGL claims a scroll long before it fires a
+ * gesture. Close that gap and a swipe can fire while scroll ownership is still
+ * undecided, so scrolling a list would also change screens. The static_assert
+ * below is the floor, not the recommendation -- leave real room.
+ */
+constexpr uint8_t APP_TOUCH_GESTURE_DISTANCE = 50;   ///< px of travel before a swipe fires; LVGL default 50, lower = more sensitive
+constexpr uint8_t APP_TOUCH_GESTURE_VELOCITY = 3;    ///< px between samples to count as a flick; LVGL default 3
+constexpr uint8_t APP_TOUCH_SCROLL_LIMIT     = 10;   ///< px before a drag becomes a scroll; LVGL default 10
+constexpr uint8_t APP_TOUCH_SCROLL_THROW     = 10;   ///< momentum slow-down in %, higher stops sooner; LVGL default 10
+
+static_assert(APP_TOUCH_SCROLL_LIMIT < APP_TOUCH_GESTURE_DISTANCE,
+              "a scroll must be claimed before a gesture can fire -- see "
+              "gestureOwnedByScroll() in app_setup.cpp");
+
+// ---------------------------------------------------------------------------
 // Notifications
 // ---------------------------------------------------------------------------
 /// How long a "new message" popup stays up before dismissing itself.
@@ -161,6 +192,28 @@ constexpr bool     APP_LORA_ENABLED_DEFAULT  = false;   ///< fail-closed
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
+// Motion
+// ---------------------------------------------------------------------------
+/**
+ * How long the app's own transitions take.
+ *
+ * Not every animation in the UI is here, and the missing one is worth knowing
+ * about: a tabview page change is lv_obj_scroll_to_x() inside
+ * lv_tabview_set_active(), whose duration LVGL derives from the screen width
+ * and clamps to its own SCROLL_ANIM_TIME_MIN/MAX (200..400 ms, lv_obj_scroll.c)
+ * rather than reading any style. Those two are #ifndef-guarded, so a
+ * -D SCROLL_ANIM_TIME_MAX=... does reach them -- but it retimes every scroll
+ * animation in the app, not just the tabs. The knob that actually belongs to
+ * us there is APP_GB_GRID_ANIMATE_TAB_CHANGE: on or off.
+ */
+/// Watch face <-> Gadgetbridge, and every BOOT-button move. One value so the
+/// swipes and the button travel at the same speed in both directions.
+constexpr uint32_t APP_SCREEN_ANIM_MS = 120;
+
+/// The quick-settings tray's drop and retract.
+constexpr uint32_t APP_QST_ANIM_MS = 220;
+
+// ---------------------------------------------------------------------------
 // Fonts -- shared roles
 // ---------------------------------------------------------------------------
 /**
@@ -171,9 +224,9 @@ constexpr bool     APP_LORA_ENABLED_DEFAULT  = false;   ///< fail-closed
  */
 #define APP_FONT_HUGE      &lv_font_montserrat_48   ///< clock, grid tile icons
 /// Body text: list rows, button labels, settings rows, the music track title.
-#define APP_FONT_BODY      &lv_font_montserrat_18
+#define APP_FONT_BODY      &lv_font_montserrat_22
 /// Captions: status bar, hints, timestamps, chat bubbles.
-#define APP_FONT_CAPTION   &lv_font_montserrat_16
+#define APP_FONT_CAPTION   &lv_font_montserrat_18
 
 // ---------------------------------------------------------------------------
 // Fonts -- simple watch face
@@ -202,7 +255,7 @@ constexpr bool     APP_LORA_ENABLED_DEFAULT  = false;   ///< fail-closed
 /// APP_QST_HEADER_HEIGHT will clip the header.
 #define APP_FONT_QST_TIME    &lv_font_montserrat_28   ///< the big clock
 #define APP_FONT_QST_DATE    &lv_font_montserrat_14
-#define APP_FONT_QST_ICON    &lv_font_montserrat_20   ///< battery/brightness/grabber/gear
+#define APP_FONT_QST_ICON    &lv_font_montserrat_24   ///< battery/brightness/grabber/gear
 #define APP_FONT_QST_VALUE   &lv_font_montserrat_14   ///< the "83%" readouts
 
 // ---------------------------------------------------------------------------
@@ -258,7 +311,7 @@ constexpr int32_t APP_GB_MSGBOX_STRIP_HEIGHT = 50;
 // ---------------------------------------------------------------------------
 /// Status bar height. Sized to hold the home button, not just the two labels
 /// -- see APP_GB_STATUS_BUTTON_SIZE.
-constexpr int32_t APP_GB_STATUS_BAR_HEIGHT = 40;
+constexpr int32_t APP_GB_STATUS_BAR_HEIGHT = 50;
 
 /// Inset at each end of the strip, so the link and battery labels are not
 /// flush against the edge of the safe rect.
@@ -268,8 +321,29 @@ constexpr int32_t APP_GB_STATUS_BAR_PAD_HOR = 8;
 /// APP_GB_BUTTON_HEIGHT because it shares a strip with the link/battery
 /// labels; APP_GB_STATUS_BUTTON_EXT_CLICK makes the *tappable* area
 /// finger-sized.
-constexpr int32_t APP_GB_STATUS_BUTTON_SIZE      = 34;
+constexpr int32_t APP_GB_STATUS_BUTTON_SIZE      = 44;
 constexpr int32_t APP_GB_STATUS_BUTTON_EXT_CLICK = 10;  ///< invisible tap margin
+
+// ---------------------------------------------------------------------------
+// Gadgetbridge screens -- missed-popup recall button
+// ---------------------------------------------------------------------------
+/**
+ * The small button that appears when the new-message popup times out unseen,
+ * and re-raises it when tapped. It lives on lv_layer_top(), so these are
+ * positions on the panel rather than inside any screen's safe rect.
+ *
+ * There is no X here on purpose. "Top right" on the Ultra's curved glass is not
+ * the top-right pixel -- near the top arc the visible area is inset far more
+ * than SAFE_INSET -- so gb_ui.cpp measures the inset with
+ * usable_area_inset_for_band() at APP_GB_RECALL_TOP and works back from the
+ * right edge by that plus APP_GB_RECALL_GAP and the button's own width. On the
+ * flat-panel boards that inset is 0 and the button lands one gap in from the
+ * right edge, which is where "top right" means what it says.
+ */
+constexpr int32_t APP_GB_RECALL_SIZE = 34;   ///< matches APP_GB_STATUS_BUTTON_SIZE
+constexpr int32_t APP_GB_RECALL_TOP  = 80;   ///< px down the panel; the arc has opened up by here
+constexpr int32_t APP_GB_RECALL_GAP  = 6;    ///< clearance from the bezel arc
+constexpr int32_t APP_GB_RECALL_EXT_CLICK = 12;   ///< invisible tap margin
 
 // ---------------------------------------------------------------------------
 // Gadgetbridge screens -- launcher grid
@@ -363,7 +437,7 @@ constexpr int32_t APP_QST_SLIDER_WIDTH_PCT = 50;
 /// The gear is pinned to the right edge of the footer rather than flowed, so
 /// it needs its own inset; the ext-click margin then makes a 20 px glyph a
 /// fingertip-sized target without drawing anything bigger.
-constexpr int32_t APP_QST_GEAR_PAD_RIGHT = 8;
+constexpr int32_t APP_QST_GEAR_PAD_RIGHT = 12;
 constexpr int32_t APP_QST_GEAR_EXT_CLICK = 12;
 
 /// One tile in the toggles band (APP_QST_TOGGLES_BAND above sizes the band
