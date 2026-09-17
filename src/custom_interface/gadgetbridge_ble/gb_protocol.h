@@ -44,6 +44,8 @@ struct GbNotification {
     std::string body;
     std::string sender;
     std::string tel;
+    std::string type;   // add                                                                                                                                                                        
+    std::string cls;    // add ("class" is a C++ keyword, so use cls)    
 };
 
 /// §5.5 `call`.

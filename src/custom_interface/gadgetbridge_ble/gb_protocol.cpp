@@ -122,6 +122,8 @@ bool gb_protocol_dispatch(const std::string &line, GbProtocolHandler &handler)
         n.body = str_of(doc["body"]);
         n.sender = str_of(doc["sender"]);
         n.tel = str_of(doc["tel"]);
+        n.type = str_of(doc["type"]);
+        n.cls = str_of(doc["class"]);
         handler.onNotify(n);
 
     } else if (t == "notify-") {

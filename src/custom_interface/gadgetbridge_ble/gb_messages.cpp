@@ -63,7 +63,11 @@ bool GbMessageStore::isTextMessage(const GbNotification &notification)
 {
     // A phone number means SMS/MMS, and a named sender means somebody said
     // something to you. Either is enough on its own.
-    if (!notification.tel.empty() || !notification.sender.empty()) {
+    if (!notification.tel.empty()) return true;
+    if(!notification.sender.empty()) return true;
+    if (!notification.cls.empty()) {
+        // todo: check if this is a messaging class, e.g. "mms" or "sms"
+        // todo: check for other classes that are not messaging, e.g. "email" or "calendar"
         return true;
     }
     return isMessagingApp(notification.src);

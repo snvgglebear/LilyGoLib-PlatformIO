@@ -126,8 +126,7 @@ static void build_face(lv_obj_t *screen)
     // drawing for both.
     lv_obj_t *img = lv_image_create(scr);
     lv_image_set_src(img, &img_battery);
-    lv_obj_align(img, LV_ALIGN_BOTTOM_RIGHT, -APP_FACE_BATT_PAD_RIGHT, APP_FACE_BOTTOM_OFFSET);
-
+    lv_obj_align(img, LV_ALIGN_TOP_MID, 0, APP_FACE_BATT_TOP_OFFSET);
     bar_batt = lv_bar_create(img);
     lv_obj_set_size(bar_batt, img_battery.header.w - APP_FACE_BATT_BAR_INSET_W,
                     img_battery.header.h - APP_FACE_BATT_BAR_INSET_H);
@@ -160,9 +159,9 @@ static void build_face(lv_obj_t *screen)
     // lv_obj_align_to() reads the reference's cached coords -- which are still
     // 0x0 until the layout it was just marked dirty by actually runs. Same
     // trap batman_dial.cpp documents around lv_obj_get_width().
-    lv_obj_update_layout(scr);
-    lv_obj_align_to(label_batt, img, LV_ALIGN_OUT_LEFT_MID, -APP_FACE_BATT_LABEL_GAP, 0);
+    lv_obj_align_to(label_batt, img, LV_ALIGN_OUT_RIGHT_MID, APP_FACE_BATT_LABEL_GAP, 0);
     lv_obj_align_to(divider, label_date, LV_ALIGN_OUT_TOP_MID, 0, -APP_FACE_DIVIDER_GAP);
+    lv_obj_update_layout(scr);
 }
 
 static void refresh(lv_timer_t *t)

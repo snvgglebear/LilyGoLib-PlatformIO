@@ -9,7 +9,8 @@
                 "platformio.platformio-ide",
                 "ms-vscode.cpptools",
                 "anthropic.claude-code",
-                "ms-vscode.copilot"
+                "ms-vscode.copilot",
+                "alefragnani.Bookmarks"
             ],
             "settings": {
                 // Let the extension install and manage its own PlatformIO

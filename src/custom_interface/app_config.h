@@ -245,7 +245,7 @@ constexpr uint32_t APP_QST_ANIM_MS = 220;
  */
 #define APP_FONT_FACE_TIME   &font_alibaba_100
 #define APP_FONT_FACE_DATE   &font_alibaba_24
-#define APP_FONT_FACE_BATT   &font_alibaba_12
+#define APP_FONT_FACE_BATT   &lv_font_montserrat_16  ///< the battery percentage readout
 
 // ---------------------------------------------------------------------------
 // Fonts -- quick settings tray
@@ -476,8 +476,8 @@ constexpr int32_t APP_FACE_DIVIDER_GAP       = 12;
 
 /// The battery meter is an lv_bar nested inside the 31x24 img_battery outline,
 /// inset far enough to sit within the drawn shell rather than over it. The
-/// percentage label hangs off its left edge by APP_FACE_BATT_LABEL_GAP.
-constexpr int32_t APP_FACE_BATT_PAD_RIGHT    = 60;
+/// percentage label hangs off its right edge by APP_FACE_BATT_LABEL_GAP.
+constexpr int32_t APP_FACE_BATT_TOP_OFFSET   = 10;
 constexpr int32_t APP_FACE_BATT_LABEL_GAP    = 5;
 constexpr int32_t APP_FACE_BATT_BAR_INSET_W  = 8;
 constexpr int32_t APP_FACE_BATT_BAR_INSET_H  = 12;
