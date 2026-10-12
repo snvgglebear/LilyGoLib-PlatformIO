@@ -27,6 +27,12 @@ std::string lowercase(const std::string &text)
     return out;
 }
 
+/*
+    * Function for finding app icon.
+*/
+const void *gb_icon_for_app(const std::string &app) {
+    return nullptr; // Placeholder implementation, replace with actual icon retrieval logic
+}
 /**
  * Apps whose notifications are conversations.
  *

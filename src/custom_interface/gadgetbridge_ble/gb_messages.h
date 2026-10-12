@@ -30,6 +30,8 @@
 #ifndef GB_MAX_MESSAGES_PER_CONVERSATION
 #define GB_MAX_MESSAGES_PER_CONVERSATION 12
 #endif
+// gb_messages.h, alongside GbMessageStore
+const void *gb_icon_for_app(const std::string &app);
 
 struct GbMessage {
     int32_t id = 0;             ///< notification id it arrived as; 0 for our own replies
